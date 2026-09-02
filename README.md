@@ -14,24 +14,33 @@ conversation — not an append-only log.
 nomem is **not** a vector database, an LLM wrapper, or a chat-history store. It is a graph
 database with an LLM-powered CRUD interface. The developer controls the rules.
 
-## Status: Phase 0
+## Status: Phase 1
 
-The full public surface — data models, config, adapter interfaces, and the `MemoryGraph`
-class — exists and is fully typed. The pipelines are **not implemented yet**; calling
-`ingest` / `retrieve` / `run_decay` raises `NotImplementedError`. See
-[AGENT.md](AGENT.md) for the phase roadmap.
+Working end-to-end: the **SQLite backend**, the **nomic embedder**, **Ollama-based
+extraction**, entity resolution (embedding + near-exact string match), the bi-temporal
+node/edge schema, `as_of` historical retrieval, and the opt-in write-boundary
+cross-reference pass. `run_decay()` and hierarchical retrieval are **Phase 2** and
+currently raise `NotImplementedError`. See [AGENT.md](AGENT.md) for the roadmap.
 
 ## Install
 
 ```bash
-uv add nomem            # core: zero mandatory dependencies
-uv add "nomem[postgres]" # + asyncpg / pgvector
-uv add "nomem[neo4j]"
-uv add "nomem[openai]"
+uv add nomem             # core: zero mandatory dependencies
+uv add "nomem[postgres]" # + asyncpg / pgvector   (Phase 2)
+uv add "nomem[neo4j]"    #                          (Phase 3)
+uv add "nomem[openai]"   # OpenAI embedder
 ```
 
-Local dev needs nothing beyond Python 3.11+. The default embedder targets a local
-[Ollama](https://ollama.com) running `nomic-embed-text`.
+Local dev needs nothing beyond Python 3.11+ and a running
+[Ollama](https://ollama.com):
+
+```bash
+ollama pull nomic-embed-text   # default embedder (768-dim)
+ollama pull llama3.1:8b        # default extraction model
+```
+
+Any piece is swappable — pass a `BaseBackend` / `BaseEmbedder` / `BaseLLM` instance or a
+bare callable instead of the adapter name.
 
 ## Usage
 
@@ -41,7 +50,9 @@ from nomem import MemoryGraph
 graph = MemoryGraph(
     user_id="u123",
     backend="sqlite",      # sqlite | postgres | neo4j | your BaseBackend
+    backend_options={"path": "memory.sqlite"},
     embedder="nomic",      # nomic | openai | any BaseEmbedder / callable
+    llm="ollama",          # ollama | any BaseLLM / callable (extraction)
     decay="combined",      # "time" | "access" | "combined" | None
     ingest_mode="auto",
 )
@@ -67,7 +78,7 @@ The sync API is a thin wrapper over the async core.
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | Module map + ingest / retrieval / decay pipelines |
 | [docs/schema.md](docs/schema.md) | Canonical `Node` / `Edge` / `SubGraph` schema + bi-temporal semantics |
-| [docs/adapters.md](docs/adapters.md) | Writing your own backend or embedder |
+| [docs/adapters.md](docs/adapters.md) | Writing your own backend, embedder, or LLM |
 
 ## Open-core split
 

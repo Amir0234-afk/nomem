@@ -1,7 +1,7 @@
 # Writing adapters
 
-Storage and embedding are adapter boundaries. Implementing an interface is all it takes —
-swapping an adapter touches nothing else.
+Storage, embedding, and extraction are adapter boundaries. Implementing an interface is
+all it takes — swapping an adapter touches nothing else.
 
 ## Backend adapter
 
@@ -60,4 +60,37 @@ from nomem.embedders import CallableEmbedder
 
 emb = CallableEmbedder(my_embed_fn, dimensions=768)
 MemoryGraph(user_id="u1", embedder=emb)
+```
+
+## LLM adapter
+
+Extraction needs a chat model that can return structured JSON. Subclass
+[`nomem.llms.base.BaseLLM`](../nomem/llms/base.py):
+
+```python
+class BaseLLM(ABC):
+    async def generate_json(
+        self, prompt: str, *, system: str | None = None,
+        schema: dict | None = None, model: str | None = None,
+    ) -> dict: ...
+```
+
+The implementation must ask the provider for structured output (Ollama `format`, an
+OpenAI JSON-mode flag, a tool schema, …) and raise `ExtractionError` if the response is
+not a JSON object. The default `OllamaLLM` posts to `/api/chat` with `format` set to the
+supplied JSON schema.
+
+Shortcut — wrap any `prompt -> json` callable (returns a `dict` or a JSON string):
+
+```python
+from nomem.llms import CallableLLM
+
+MemoryGraph(user_id="u1", llm=CallableLLM(my_llm_fn))
+```
+
+Register a named adapter the same way as backends:
+
+```python
+from nomem.llms import LLM_REGISTRY
+LLM_REGISTRY["anthropic"] = MyAnthropicLLM
 ```

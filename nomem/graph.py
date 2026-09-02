@@ -1,15 +1,11 @@
 """The public entry point: :class:`MemoryGraph`.
 
-This is the one class applications import. It owns configuration, resolves the
-backend + embedder adapters, wires up the four core pipeline objects, and
-exposes the ``ingest`` / ``retrieve`` / ``run_decay`` surface (sync) plus the
-``a``-prefixed async variants.
+Owns configuration, resolves the backend / embedder / LLM adapters, wires up the
+core pipeline objects, and exposes the ``ingest`` / ``retrieve`` / ``run_decay``
+surface (sync) plus the ``a``-prefixed async variants.
 
 The async methods are the real implementation; the sync methods delegate through
-:func:`nomem.sync.run_sync`. In Phase 0 the orchestration flow is written out but
-the pipeline calls it makes are not implemented yet, so calling ``ingest`` /
-``retrieve`` / ``run_decay`` raises ``NotImplementedError`` (never
-``AttributeError``).
+:func:`nomem.sync.run_sync`.
 """
 
 from __future__ import annotations
@@ -32,6 +28,8 @@ from .core.graph import GraphCRUD
 from .core.retrieval import Retriever
 from .embedders import resolve_embedder
 from .embedders.base import BaseEmbedder
+from .llms import resolve_llm
+from .llms.base import BaseLLM
 from .models import DecayResult, IngestReceipt, SubGraph
 from .sync import run_sync
 
@@ -45,6 +43,7 @@ class MemoryGraph:
         *,
         backend: str | BaseBackend = "sqlite",
         embedder: str | BaseEmbedder | Any = "nomic",
+        llm: str | BaseLLM | Any = "ollama",
         decay: str | None = "combined",
         ingest_mode: str = "auto",
         config: MemoryGraphConfig | None = None,
@@ -53,11 +52,13 @@ class MemoryGraph:
         retrieval_config: RetrievalConfig | None = None,
         backend_options: dict[str, Any] | None = None,
         embedder_options: dict[str, Any] | None = None,
+        llm_options: dict[str, Any] | None = None,
     ) -> None:
         self.config = config or MemoryGraphConfig(
             user_id=user_id,
             backend=backend if isinstance(backend, str) else "custom",
             embedder=embedder if isinstance(embedder, str) else "custom",
+            llm=llm if isinstance(llm, str) else "custom",
             decay=decay,  # type: ignore[arg-type]
             ingest_mode=ingest_mode,  # type: ignore[arg-type]
             decay_config=decay_config or DecayConfig(),
@@ -65,14 +66,28 @@ class MemoryGraph:
             retrieval_config=retrieval_config or RetrievalConfig(),
             backend_options=backend_options or {},
             embedder_options=embedder_options or {},
+            llm_options=llm_options or {},
         )
+        uid = self.config.user_id
 
-        self.backend: BaseBackend = resolve_backend(backend, self.config.backend_options)
+        backend_opts = {"user_id": uid, **self.config.backend_options}
+        self.backend: BaseBackend = (
+            backend if isinstance(backend, BaseBackend) else resolve_backend(backend, backend_opts)
+        )
         self.embedder: BaseEmbedder = resolve_embedder(embedder, self.config.embedder_options)
+        self.llm: BaseLLM = resolve_llm(None if llm == "ollama" else llm, self.config.llm_options)
 
-        self.extractor = EntityExtractor(model=self.config.ingest_config.extraction_model)
+        count_on_ingest = self.config.decay_config.count_on_ingest
+        self.extractor = EntityExtractor(
+            llm=self.llm, model=self.config.ingest_config.extraction_model
+        )
         self.resolver = EntityResolver(backend=self.backend, embedder=self.embedder)
-        self.crud = GraphCRUD(backend=self.backend, embedder=self.embedder)
+        self.crud = GraphCRUD(
+            backend=self.backend,
+            embedder=self.embedder,
+            user_id=uid,
+            count_on_ingest=count_on_ingest,
+        )
         self.retriever = Retriever(backend=self.backend, embedder=self.embedder)
         self.decay_engine = DecayEngine(backend=self.backend)
 
@@ -92,6 +107,12 @@ class MemoryGraph:
         entities, relations = await self.extractor.extract(user, assistant, cfg)
         resolutions = await self.resolver.resolve(entities, cfg)
         receipt = await self.crud.apply_resolutions(resolutions, relations, cfg)
+
+        if cfg.cross_reference:
+            touched = [*receipt.nodes_created, *receipt.nodes_updated]
+            receipt.edges_cross_referenced = await self.crud.cross_reference_pass(
+                touched, cfg.cross_reference_threshold
+            )
         return receipt
 
     async def aretrieve(

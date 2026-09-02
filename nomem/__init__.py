@@ -9,8 +9,8 @@ bi-temporal knowledge graph with an explicit LLM-powered CRUD interface.
     graph.ingest(user="...", assistant="...")
     result = graph.retrieve("Kira")
 
-Status: Phase 0 — the full public surface exists and is typed; the pipelines are
-not implemented yet.
+Status: Phase 1 — SQLite backend, nomic embedder, and Ollama extraction wired
+end-to-end. Decay and hierarchical retrieval are Phase 2.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from .exceptions import (
     AmbiguousResolutionError,
     BackendError,
     ConfigError,
+    EdgeNotFoundError,
     EmbedderError,
     ExtractionError,
     HardDeleteNotSupportedError,
@@ -49,6 +50,7 @@ __all__ = [
     "DecayConfig",
     "DecayResult",
     "Edge",
+    "EdgeNotFoundError",
     "EmbedderError",
     "ExtractedEntity",
     "ExtractedRelation",

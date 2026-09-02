@@ -35,21 +35,30 @@ def test_backend_interface_methods_present() -> None:
         assert callable(getattr(BaseBackend, name))
 
 
-@pytest.mark.parametrize("name", sorted(BACKEND_REGISTRY))
-async def test_backend_stubs_subclass_and_raise(name: str) -> None:
+@pytest.mark.parametrize("name", ["postgres", "neo4j"])
+async def test_unimplemented_backend_stubs_subclass_and_raise(name: str) -> None:
     backend = resolve_backend(name)
     assert isinstance(backend, BaseBackend)
     with pytest.raises(NotImplementedError):
         await backend.get_node("x")
 
 
-@pytest.mark.parametrize("name", sorted(EMBEDDER_REGISTRY))
-async def test_embedder_stubs_subclass_and_raise(name: str) -> None:
-    emb = resolve_embedder(name)
-    assert isinstance(emb, BaseEmbedder)
-    assert emb.dimensions > 0
+async def test_sqlite_backend_is_live() -> None:
+    backend = resolve_backend("sqlite", {"user_id": "u1", "path": ":memory:"})
+    assert isinstance(backend, BaseBackend)
+    assert await backend.get_node("missing") is None  # no NotImplementedError
+
+
+def test_all_backends_registered() -> None:
+    assert set(BACKEND_REGISTRY) == {"sqlite", "postgres", "neo4j"}
+
+
+async def test_embedder_registry_entries_construct() -> None:
+    assert resolve_embedder("nomic").dimensions == 768
+    assert resolve_embedder("openai").dimensions > 0
     with pytest.raises(NotImplementedError):
-        await emb.embed("hello")
+        await resolve_embedder("openai").embed("hello")  # requires the 'openai' extra
+    assert set(EMBEDDER_REGISTRY) == {"nomic", "openai"}
 
 
 def test_resolve_backend_rejects_unknown() -> None:

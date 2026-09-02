@@ -61,3 +61,4 @@ files = ["nomem"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = ["live: end-to-end tests that require a local Ollama (deselect with -m 'not live')"]

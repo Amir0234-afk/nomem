@@ -50,13 +50,22 @@ class IngestConfig:
     edge_types: list[str] | None = None  # None -> track any relation the extractor emits
     importance_floor: float = 0.0  # extractions below this are held in queued_writes
     resolution_strategy: str = "embedding+string"  # match strategy identifier
-    resolution_confidence_threshold: float = 0.75  # >= -> auto-resolve; < -> queue/ambiguous
+    resolution_confidence_threshold: float = 0.75  # >= -> auto-resolve to the match
+    ambiguity_floor: float = 0.5  # [floor, threshold) -> ambiguous; < floor -> treated as new
+    string_match_min: float = 0.8  # surface-form ratio below this is ignored (embedding only)
+    cross_reference_threshold: float = 0.85  # cross-ref pass: create edge when sim >= this
+    on_ambiguous: str = "queue"  # "queue" (dev review) | "create" (new node anyway)
     embed_immediately: bool = True  # False -> defer embedding to a later batch pass
     cross_reference: bool = False  # AGENT.md: write-boundary cross-reference is opt-in
 
     def __post_init__(self) -> None:
-        if not 0.0 <= self.resolution_confidence_threshold <= 1.0:
-            raise ConfigError("resolution_confidence_threshold must be in [0, 1]")
+        for name in ("resolution_confidence_threshold", "ambiguity_floor", "string_match_min"):
+            if not 0.0 <= getattr(self, name) <= 1.0:
+                raise ConfigError(f"{name} must be in [0, 1]")
+        if self.ambiguity_floor > self.resolution_confidence_threshold:
+            raise ConfigError("ambiguity_floor must be <= resolution_confidence_threshold")
+        if self.on_ambiguous not in ("queue", "create"):
+            raise ConfigError("on_ambiguous must be 'queue' or 'create'")
 
 
 @dataclass
@@ -86,6 +95,7 @@ class MemoryGraphConfig:
     user_id: str
     backend: str = "sqlite"  # sqlite | postgres | neo4j | BaseBackend instance name
     embedder: str = "nomic"  # nomic | openai | custom | BaseEmbedder instance name
+    llm: str = "ollama"  # ollama | BaseLLM instance name (extraction model)
     decay: DecayMode = "combined"  # "time" | "access" | "combined" | None
     ingest_mode: IngestMode = "auto"  # "auto" | "manual"
 
@@ -95,6 +105,7 @@ class MemoryGraphConfig:
 
     backend_options: dict[str, Any] = field(default_factory=dict)
     embedder_options: dict[str, Any] = field(default_factory=dict)
+    llm_options: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.user_id:
