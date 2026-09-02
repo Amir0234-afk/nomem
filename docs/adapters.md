@@ -6,7 +6,7 @@ all it takes — swapping an adapter touches nothing else.
 ## Backend adapter
 
 Subclass [`nomem.backends.base.BaseBackend`](../nomem/backends/base.py) and implement all
-ten coroutines:
+eleven coroutines:
 
 | Method | Contract |
 |---|---|
@@ -17,9 +17,10 @@ ten coroutines:
 | `upsert_edge(edge) -> Edge` | Create, or bump `weight` / metadata on an existing active edge |
 | `retire_edge(edge_id, superseded_by=None) -> Edge` | Set `valid_to = now`. **Never delete.** |
 | `vector_search(embedding, top_k) -> list[Node]` | `top_k` most similar **active** nodes |
+| `list_nodes(*, active_only=True, context=None, as_of=None) -> list[Node]` | Enumerate nodes; `context` filters by `metadata["context"]` overlap. Powers hierarchical retrieval. |
 | `traverse(seed_ids, hops, as_of=None) -> SubGraph` | Expand `hops` edges from seeds; honor `as_of` |
 | `cross_reference(node, threshold) -> list[tuple[Node, float]]` | Active nodes with similarity ≥ `threshold` |
-| `run_decay(config) -> DecayResult` | One decay/pruning pass over this user's nodes |
+| `run_decay(config) -> DecayResult` | One decay/pruning pass: rescore active nodes with `core/decay.py::score_node`, collect `prune_candidates`, retire them iff `config.pruning` |
 
 Rules every backend must follow:
 

@@ -59,6 +59,21 @@ class BaseBackend(ABC):
         """Return the ``top_k`` active nodes most similar to ``embedding``."""
 
     @abstractmethod
+    async def list_nodes(
+        self,
+        *,
+        active_only: bool = True,
+        context: list[str] | None = None,
+        as_of: datetime | None = None,
+    ) -> list[Node]:
+        """Enumerate this user's nodes.
+
+        ``context`` keeps only nodes whose ``metadata["context"]`` intersects the
+        given tags. ``as_of`` applies the same temporal filter as ``get_node``.
+        Used by hierarchical retrieval and by callers that need the whole set.
+        """
+
+    @abstractmethod
     async def traverse(
         self, seed_ids: list[str], hops: int, as_of: datetime | None = None
     ) -> SubGraph:

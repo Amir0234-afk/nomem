@@ -5,15 +5,24 @@ Pipeline (AGENT.md "Retrieval Pipeline")::
     query -> embed -> vector similarity (top-k seeds) -> N-hop traversal
           -> enforce token budget -> SubGraph { nodes, edges, metadata }
 
-Flat mode only in Phase 1; hierarchical sub-index routing is Phase 2. nomem
-returns the structured object — it never serializes to a prompt string.
+**Flat** (default): seed via ``backend.vector_search`` over all active nodes.
+
+**Hierarchical** (``mode="hierarchical"``): a small core index (top nodes by
+importance, always seeded) plus a situation sub-index chosen by a router:
+
+* ``deterministic`` — nodes whose ``metadata["context"]`` intersects the
+  dev-supplied ``context`` tags
+* ``semantic`` — the tag whose member centroid is closest to the query
+* ``hybrid`` — deterministic, then semantic fallback (default)
+
+nomem returns the structured object — it never serializes to a prompt string.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from .._vector import cosine
+from .._vector import cosine, mean
 from ..backends.base import BaseBackend
 from ..config import RetrievalConfig
 from ..embedders.base import BaseEmbedder
@@ -28,6 +37,11 @@ def _est_tokens(text: str) -> int:
 
 def _node_tokens(node: Node) -> int:
     return _est_tokens(node.label) + 8  # + small fixed overhead for structure
+
+
+def _node_context(node: Node) -> set[str]:
+    raw = node.metadata.get("context", [])
+    return set(raw) if isinstance(raw, list) else set()
 
 
 class Retriever:
@@ -49,17 +63,20 @@ class Retriever:
         query: str,
         config: RetrievalConfig,
         as_of: datetime | None = None,
+        context: list[str] | None = None,
     ) -> SubGraph:
         """Return a bounded :class:`SubGraph` relevant to ``query``."""
-        if config.mode == "hierarchical":
-            raise NotImplementedError(
-                "hierarchical retrieval is a Phase 2 deliverable; use mode='flat'"
-            )
-
         query_vec = await self._embed_query(query)
-        seeds = await self._vector_seed(query_vec, config)
-        subgraph = await self._traverse(seeds, config, as_of)
 
+        sub_index_used: str | None = None
+        if config.mode == "hierarchical":
+            seeds, sub_index_used = await self._hierarchical_seed(
+                query_vec, config, context, as_of
+            )
+        else:
+            seeds = await self._vector_seed(query_vec, config)
+
+        subgraph = await self._traverse(seeds, config, as_of)
         subgraph = self._enforce_budget(subgraph, config)
 
         if as_of is None and self.count_access:
@@ -69,9 +86,11 @@ class Retriever:
             retrieved_at=datetime.now(tz=UTC).isoformat(),
             seed_node_ids=[n.id for n in seeds],
             hop_depth=config.hop_depth,
-            retrieval_mode="flat",
+            retrieval_mode=config.mode,
             decay_scores={n.id: n.importance for n in subgraph.nodes},
         )
+        if config.mode == "hierarchical":
+            subgraph.metadata["sub_index_used"] = sub_index_used
         return subgraph
 
     # --- pipeline stages ------------------------------------------------
@@ -81,6 +100,89 @@ class Retriever:
 
     async def _vector_seed(self, query_vec: Vector, config: RetrievalConfig) -> list[Node]:
         return await self.backend.vector_search(query_vec, config.top_k)
+
+    async def _hierarchical_seed(
+        self,
+        query_vec: Vector,
+        config: RetrievalConfig,
+        context: list[str] | None,
+        as_of: datetime | None,
+    ) -> tuple[list[Node], str | None]:
+        nodes = await self.backend.list_nodes(active_only=True, as_of=as_of)
+        if not nodes:
+            return [], None
+
+        core = sorted(nodes, key=lambda n: n.importance, reverse=True)[
+            : max(config.core_index_size_floor, 0)
+        ]
+        sub, used = self._route_sub_index(nodes, query_vec, config, context)
+
+        pool: dict[str, Node] = {n.id: n for n in core}
+        for n in sub:
+            pool.setdefault(n.id, n)
+
+        ranked = sorted(
+            (n for n in pool.values() if n.embedding),
+            key=lambda n: cosine(query_vec, n.embedding),
+            reverse=True,
+        )
+        return ranked[: config.top_k], used
+
+    def _route_sub_index(
+        self,
+        nodes: list[Node],
+        query_vec: Vector,
+        config: RetrievalConfig,
+        context: list[str] | None,
+    ) -> tuple[list[Node], str | None]:
+        strategy = config.sub_index_strategy
+
+        if strategy in ("deterministic", "hybrid"):
+            hit = self._deterministic(nodes, context)
+            if hit is not None:
+                return hit
+            if strategy == "deterministic":
+                return [], None
+
+        if strategy in ("semantic", "hybrid"):
+            return self._semantic(nodes, query_vec)
+
+        return [], None
+
+    @staticmethod
+    def _deterministic(
+        nodes: list[Node], context: list[str] | None
+    ) -> tuple[list[Node], str | None] | None:
+        if not context:
+            return None
+        wanted = set(context)
+        matched = [n for n in nodes if _node_context(n) & wanted]
+        if not matched:
+            return None
+        return matched, ",".join(sorted(wanted))
+
+    @staticmethod
+    def _semantic(nodes: list[Node], query_vec: Vector) -> tuple[list[Node], str | None]:
+        tags: set[str] = set()
+        for node in nodes:
+            tags |= _node_context(node)
+        if not tags:
+            return [], None
+
+        best_tag: str | None = None
+        best_score = float("-inf")
+        for tag in sorted(tags):
+            members = [n.embedding for n in nodes if tag in _node_context(n) and n.embedding]
+            centroid = mean(members)
+            if not centroid:
+                continue
+            score = cosine(query_vec, centroid)
+            if score > best_score:
+                best_score, best_tag = score, tag
+
+        if best_tag is None:
+            return [], None
+        return [n for n in nodes if best_tag in _node_context(n)], best_tag
 
     async def _traverse(
         self, seeds: list[Node], config: RetrievalConfig, as_of: datetime | None
@@ -128,10 +230,6 @@ class Retriever:
             )
             node.access_count += 1
             node.last_accessed_at = now
-
-    # kept for parity with the Phase 0 skeleton / future hierarchical mode
-    def _score_relevance(self, query_vec: Vector, node: Node) -> float:
-        return cosine(query_vec, node.embedding)
 
 
 __all__ = ["Retriever"]

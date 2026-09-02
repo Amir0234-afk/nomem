@@ -21,7 +21,7 @@ application code.
 | `valid_to` | `datetime | None` | `None` == currently active; set on RETIRE |
 | `superseded_by` | `str | None` | Id of the node that replaced this one, if retired |
 | `resolution_source` | `str` | `"llm" | "string_match" | "embedding" | "manual"` |
-| `metadata` | `dict` | Dev-defined, stored as JSON |
+| `metadata` | `dict` | Dev-defined, stored as JSON. `metadata["context"]` (list of tags) is set from `ingest(..., context=[...])` and routes hierarchical retrieval. |
 
 ## `Edge`
 

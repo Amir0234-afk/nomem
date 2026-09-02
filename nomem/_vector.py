@@ -27,6 +27,21 @@ def unpack(blob: bytes) -> Vector:
     return list(out)
 
 
+def mean(vectors: list[Vector]) -> Vector:
+    """Component-wise mean of equal-length vectors; ``[]`` if the input is empty."""
+    usable = [v for v in vectors if v]
+    if not usable:
+        return []
+    dim = len(usable[0])
+    acc = [0.0] * dim
+    for vec in usable:
+        if len(vec) != dim:
+            continue
+        for i, x in enumerate(vec):
+            acc[i] += x
+    return [x / len(usable) for x in acc]
+
+
 def cosine(a: Vector, b: Vector) -> float:
     """Cosine similarity in ``[-1, 1]``; ``0.0`` if either vector is empty/zero."""
     if not a or not b or len(a) != len(b):

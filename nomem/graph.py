@@ -69,6 +69,9 @@ class MemoryGraph:
             llm_options=llm_options or {},
         )
         uid = self.config.user_id
+        # `decay=` is the documented knob for the decay mode; keep the nested
+        # DecayConfig in sync so per-call overrides start from the right place.
+        self.config.decay_config.mode = self.config.decay
 
         backend_opts = {"user_id": uid, **self.config.backend_options}
         self.backend: BaseBackend = (
@@ -98,15 +101,17 @@ class MemoryGraph:
         user: str,
         assistant: str,
         config: dict[str, Any] | None = None,
+        context: list[str] | None = None,
     ) -> IngestReceipt:
         """Feed one conversation turn into the graph; return an ingest receipt.
 
         Flow: extract -> resolve -> apply CRUD -> (opt-in) cross-reference.
+        ``context`` tags this turn's nodes for hierarchical retrieval routing.
         """
         cfg = merge(self.config.ingest_config, config)
         entities, relations = await self.extractor.extract(user, assistant, cfg)
         resolutions = await self.resolver.resolve(entities, cfg)
-        receipt = await self.crud.apply_resolutions(resolutions, relations, cfg)
+        receipt = await self.crud.apply_resolutions(resolutions, relations, cfg, context)
 
         if cfg.cross_reference:
             touched = [*receipt.nodes_created, *receipt.nodes_updated]
@@ -120,10 +125,14 @@ class MemoryGraph:
         query: str,
         config: dict[str, Any] | None = None,
         as_of: datetime | None = None,
+        context: list[str] | None = None,
     ) -> SubGraph:
-        """Retrieve a bounded structured subgraph relevant to ``query``."""
+        """Retrieve a bounded structured subgraph relevant to ``query``.
+
+        ``context`` tags route hierarchical retrieval to a situation sub-index.
+        """
         cfg = merge(self.config.retrieval_config, config)
-        return await self.retriever.retrieve(query, cfg, as_of)
+        return await self.retriever.retrieve(query, cfg, as_of, context)
 
     async def arun_decay(self, config: dict[str, Any] | None = None) -> DecayResult:
         """Run one decay/pruning pass. Dev-invoked only — never self-scheduled."""
@@ -137,18 +146,20 @@ class MemoryGraph:
         user: str,
         assistant: str,
         config: dict[str, Any] | None = None,
+        context: list[str] | None = None,
     ) -> IngestReceipt:
         """Sync wrapper over :meth:`aingest`."""
-        return run_sync(self.aingest(user, assistant, config))
+        return run_sync(self.aingest(user, assistant, config, context))
 
     def retrieve(
         self,
         query: str,
         config: dict[str, Any] | None = None,
         as_of: datetime | None = None,
+        context: list[str] | None = None,
     ) -> SubGraph:
         """Sync wrapper over :meth:`aretrieve`."""
-        return run_sync(self.aretrieve(query, config, as_of))
+        return run_sync(self.aretrieve(query, config, as_of, context))
 
     def run_decay(self, config: dict[str, Any] | None = None) -> DecayResult:
         """Sync wrapper over :meth:`arun_decay`."""

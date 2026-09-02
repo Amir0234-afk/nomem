@@ -14,13 +14,14 @@ conversation — not an append-only log.
 nomem is **not** a vector database, an LLM wrapper, or a chat-history store. It is a graph
 database with an LLM-powered CRUD interface. The developer controls the rules.
 
-## Status: Phase 1
+## Status: Phase 2 (in progress)
 
-Working end-to-end: the **SQLite backend**, the **nomic embedder**, **Ollama-based
-extraction**, entity resolution (embedding + near-exact string match), the bi-temporal
-node/edge schema, `as_of` historical retrieval, and the opt-in write-boundary
-cross-reference pass. `run_decay()` and hierarchical retrieval are **Phase 2** and
-currently raise `NotImplementedError`. See [AGENT.md](AGENT.md) for the roadmap.
+Working end-to-end on the **SQLite backend**: Ollama-based extraction, entity resolution
+(embedding + near-exact string match), the bi-temporal node/edge schema, `as_of`
+historical retrieval, the opt-in cross-reference pass, the **decay pass**
+(`run_decay()` — scoring + optional pruning), and **hierarchical retrieval** (core index
++ context-tag-routed situation sub-indexes). The **PostgreSQL backend** is the remaining
+Phase 2 deliverable. See [AGENT.md](AGENT.md) for the roadmap.
 
 ## Install
 
@@ -60,14 +61,23 @@ graph = MemoryGraph(
 graph.ingest(
     user="What happened with Kira?",
     assistant="Kira left the room after the argument.",
+    context=["household"],           # optional tags for hierarchical routing
 )
 
 result = graph.retrieve("Kira")
 # -> SubGraph(nodes=[...], edges=[...], metadata={...})
 
+result = graph.retrieve("Kira", as_of=some_datetime)   # historical state
+result = graph.retrieve(                                # hierarchical
+    "Kira", config={"mode": "hierarchical"}, context=["household"],
+)
+
+graph.run_decay()   # rescore importance; prune if decay_config.pruning is on
+
 # async variants — identical signatures
 await graph.aingest(...)
 await graph.aretrieve(...)
+await graph.arun_decay()
 ```
 
 The sync API is a thin wrapper over the async core.

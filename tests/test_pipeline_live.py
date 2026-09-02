@@ -67,3 +67,24 @@ async def test_real_ingest_then_retrieve(graph: MemoryGraph) -> None:
 async def test_real_embeddings_are_768_dim(graph: MemoryGraph) -> None:
     vec = await graph.embedder.embed("hello world")
     assert len(vec) == 768
+
+
+async def test_real_decay_and_hierarchical(graph: MemoryGraph) -> None:
+    await graph.aingest(
+        "Work stuff", "The Q3 revenue report is due Friday and Priya owns it.", context=["work"]
+    )
+    await graph.aingest(
+        "Home stuff", "The tomatoes in the back garden are finally ripe.", context=["home"]
+    )
+
+    routed = await graph.aretrieve(
+        "when is the revenue report due?",
+        config={"mode": "hierarchical", "core_index_size_floor": 1},
+        context=["work"],
+    )
+    assert routed.metadata["sub_index_used"] == "work"
+    assert routed.nodes
+
+    result = await graph.arun_decay()
+    assert result.nodes_scored >= 3
+    assert all(s >= 0.0 for s in result.scores.values())

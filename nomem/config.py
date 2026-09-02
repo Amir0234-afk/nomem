@@ -35,11 +35,14 @@ class DecayConfig:
     pruning: bool = False  # AGENT.md default: pruning is OFF; dev opts in
     decay_schedule: str | None = None  # AGENT.md default: nomem does not self-schedule
     count_on_ingest: bool = False  # AGENT.md default: access_count increments on retrieve only
+    mode: DecayMode = "combined"  # set from MemoryGraph(decay=...); None disables run_decay
 
     def __post_init__(self) -> None:
         for name in ("alpha", "beta", "lambda_", "importance_floor"):
             if getattr(self, name) < 0:
                 raise ConfigError(f"DecayConfig.{name} must be >= 0")
+        if self.mode not in ("time", "access", "combined", None):
+            raise ConfigError("DecayConfig.mode must be 'time' | 'access' | 'combined' | None")
 
 
 @dataclass

@@ -82,10 +82,16 @@ class GraphCRUD:
         resolutions: list[ResolutionOutcome],
         relations: list[ExtractedRelation],
         config: IngestConfig,
+        context: list[str] | None = None,
     ) -> IngestReceipt:
-        """Map resolution outcomes to CREATE / UPDATE / RETIRE, then upsert edges."""
+        """Map resolution outcomes to CREATE / UPDATE / RETIRE, then upsert edges.
+
+        ``context`` tags every node created or updated this turn (stored under
+        ``metadata["context"]``) so hierarchical retrieval can route to it.
+        """
         receipt = IngestReceipt()
         label_to_id: dict[str, str] = {}
+        tags = sorted(set(context)) if context else []
 
         # Pass 1: classify, and batch-embed everything that needs a new node.
         to_create: list[ResolutionOutcome] = []
@@ -97,7 +103,7 @@ class GraphCRUD:
                     await self.retire_node(outcome.resolved_node_id)
                     receipt.nodes_retired.append(outcome.resolved_node_id)
                 else:
-                    await self._touch(outcome.resolved_node_id)
+                    await self._touch(outcome.resolved_node_id, tags)
                     receipt.nodes_updated.append(outcome.resolved_node_id)
                     label_to_id[entity.label] = outcome.resolved_node_id
             elif outcome.ambiguous:
@@ -116,7 +122,9 @@ class GraphCRUD:
         if to_create:
             vectors = await self.embedder.embed_batch([o.extracted.label for o in to_create])
             for outcome, vector in zip(to_create, vectors, strict=True):
-                node = self._build_node(outcome.extracted, vector, outcome.resolution_source)
+                node = self._build_node(
+                    outcome.extracted, vector, outcome.resolution_source, tags
+                )
                 await self.create_node(node)
                 receipt.nodes_created.append(node.id)
                 receipt.resolution_confidence[node.id] = outcome.confidence
@@ -168,12 +176,16 @@ class GraphCRUD:
 
     # --- helpers --------------------------------------------------
 
-    async def _touch(self, node_id: str) -> Node:
+    async def _touch(self, node_id: str, context: list[str]) -> Node:
         updates: dict[str, Any] = {"last_accessed_at": _now()}
-        if self.count_on_ingest:
+        if self.count_on_ingest or context:
             current = await self.backend.get_node(node_id)
             if current is not None:
-                updates["access_count"] = current.access_count + 1
+                if self.count_on_ingest:
+                    updates["access_count"] = current.access_count + 1
+                if context:
+                    merged = sorted(set(current.metadata.get("context", [])) | set(context))
+                    updates["metadata"] = {**current.metadata, "context": merged}
         return await self.backend.update_node(node_id, updates)
 
     def _build_node(
@@ -181,8 +193,12 @@ class GraphCRUD:
         entity: ExtractedEntity,
         embedding: list[float],
         resolution_source: str,
+        context: list[str] | None = None,
     ) -> Node:
         now = _now()
+        metadata = dict(entity.metadata)
+        if context:
+            metadata["context"] = sorted(set(context))
         return Node(
             id=_new_id(),
             user_id=self.user_id,
@@ -195,7 +211,7 @@ class GraphCRUD:
             created_at=now,
             valid_from=now,
             resolution_source=resolution_source,  # type: ignore[arg-type]
-            metadata=dict(entity.metadata),
+            metadata=metadata,
         )
 
     def _build_edge(

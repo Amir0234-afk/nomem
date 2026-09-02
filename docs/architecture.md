@@ -15,8 +15,8 @@ nomem/
 ├── core/
 │   ├── extraction.py  # EntityExtractor (LLM call), EntityResolver (match against graph)
 │   ├── graph.py       # GraphCRUD — resolution outcomes -> CREATE/UPDATE/RETIRE + edges
-│   ├── retrieval.py   # Retriever — embed -> seed -> traverse -> bounded SubGraph
-│   └── decay.py       # DecayEngine — importance scoring + prune eligibility (Phase 2)
+│   ├── retrieval.py   # Retriever — flat + hierarchical seed -> traverse -> bounded SubGraph
+│   └── decay.py       # score_node() formula + DecayEngine (delegates to backend.run_decay)
 ├── backends/
 │   ├── base.py        # BaseBackend ABC (the adapter contract)
 │   ├── sqlite.py      # Phase 1 · zero-infra default (stdlib sqlite3 + Python-side vectors)
@@ -37,9 +37,9 @@ nomem/
 ```
 
 `MemoryGraph.__init__` resolves the backend + embedder + LLM through the registries
-(injecting `user_id` into the backend), then constructs one instance each of
-`EntityExtractor`, `EntityResolver`, `GraphCRUD`, `Retriever`, and `DecayEngine`,
-sharing the resolved adapters.
+(injecting `user_id` into the backend), syncs `DecayConfig.mode` from the `decay=` knob,
+then constructs one instance each of `EntityExtractor`, `EntityResolver`, `GraphCRUD`,
+`Retriever`, and `DecayEngine`, sharing the resolved adapters.
 
 ### Dimensions note
 
@@ -88,31 +88,39 @@ query string
         ▼
 Retriever._embed_query
         │
-        ▼
-(hierarchical only, Phase 2) _core_index_lookup → _route_sub_index
-        │   mode='hierarchical' currently raises NotImplementedError
-        ▼
-_vector_seed → top-k seed nodes  (backend.vector_search, cosine in Python)
-        │
-        ▼
+        ├─ flat (default) ──────────────────────────────────────────────┐
+        │   _vector_seed → backend.vector_search → top-k seed nodes      │
+        │                                                               │
+        └─ hierarchical (mode='hierarchical') ──────────────────────────┤
+            backend.list_nodes(active_only) →                           │
+            core index   = top `core_index_size_floor` by importance    │
+            sub-index    = _route_sub_index(context tags, query_vec):   │
+                deterministic → nodes whose metadata["context"] ∩ tags  │
+                semantic      → tag whose member-centroid ≈ query       │
+                hybrid        → deterministic, then semantic fallback   │
+            seeds = top-k of (core ∪ sub) by cosine to query            │
+                                                                        ▼
 _traverse → N hops (config.hop_depth), honoring as_of
         │
         ▼
-_enforce_budget → trim to config.token_budget (or raise RetrievalBudgetExceededError)
-        │
+_enforce_budget → drop lowest-importance nodes past config.token_budget
+        │            (raise RetrievalBudgetExceededError if one node alone exceeds it)
         ▼
-SubGraph { nodes, edges, metadata }
+SubGraph { nodes, edges, metadata }   # metadata.retrieval_mode, .sub_index_used
 ```
 
 `retrieve()` increments `access_count` on every returned node (skipped when `as_of` is
-set — historical reads are not accesses). nomem never serializes the `SubGraph` to a
-prompt string — that is the application's responsibility.
+set — historical reads are not accesses). `context=` tags on `ingest()` are stored under
+`node.metadata["context"]` (merged on re-mention) and are what the router matches.
+nomem never serializes the `SubGraph` to a prompt string — that is the application's
+responsibility.
 
-## Decay pass — Phase 2
+## Decay pass
 
 Dev-invoked only — `graph.run_decay()` / `await graph.arun_decay()`. nomem never
-background-schedules it. `DecayEngine` / `SQLiteBackend.run_decay` currently raise
-`NotImplementedError`; the model below is the Phase 2 target.
+background-schedules it. `DecayEngine.run` validates that decay is enabled and delegates
+to `backend.run_decay(config)`; the per-node formula (`core/decay.py::score_node`) is
+shared so every backend scores identically.
 
 ```
 importance     = (α · access_weight) + (β · recency_weight)
@@ -120,6 +128,11 @@ access_weight  = log(1 + access_count)
 recency_weight = exp(-λ · days_since_last_access)
 ```
 
-Nodes with `importance < importance_floor` are prune-*eligible*; they are retired only
-when `decay_config.pruning` is `True`. Defaults: α=0.6, β=0.4, λ=0.1,
-importance_floor=0.05, pruning off.
+`MemoryGraph(decay=...)` sets `DecayConfig.mode`, which zeroes one term:
+`"access"` → recency off, `"time"` → access off, `"combined"` → both, `None` →
+`run_decay()` raises `ConfigError`.
+
+Nodes scoring `< importance_floor` are prune-*eligible* (`DecayResult.prune_candidates`);
+they are retired — `valid_to` set, never hard-deleted — only when `pruning` is `True`
+(`DecayResult.nodes_pruned`). Defaults: α=0.6, β=0.4, λ=0.1, importance_floor=0.05,
+pruning off.

@@ -191,11 +191,44 @@ async def test_user_scoping(backend: SQLiteBackend) -> None:
     assert await other.get_node("n1") is None
 
 
-async def test_run_decay_is_phase_two(backend: SQLiteBackend) -> None:
+async def test_run_decay_scores_and_optionally_prunes(backend: SQLiteBackend) -> None:
+    from datetime import timedelta
+
     from nomem.config import DecayConfig
 
-    with pytest.raises(NotImplementedError):
-        await backend.run_decay(DecayConfig())
+    stale = make_node("stale", at=NOW - timedelta(days=400))
+    stale.last_accessed_at = NOW - timedelta(days=400)
+    fresh = make_node("fresh", at=datetime.now(tz=UTC))
+    fresh.last_accessed_at = datetime.now(tz=UTC)
+    fresh.access_count = 10
+    await backend.create_node(stale)
+    await backend.create_node(fresh)
+
+    # scoring only — nothing retired
+    result = await backend.run_decay(DecayConfig(mode="combined", pruning=False))
+    assert result.nodes_scored == 2
+    assert result.scores["stale"] < result.scores["fresh"]
+    assert "stale" in result.prune_candidates
+    assert result.nodes_pruned == []
+    assert (await backend.get_node("stale")) is not None  # still active
+
+    # pruning on — stale node is retired, not deleted
+    result = await backend.run_decay(DecayConfig(mode="combined", pruning=True))
+    assert "stale" in result.nodes_pruned
+    stale_after = await backend.get_node("stale")
+    assert stale_after is not None and stale_after.valid_to is not None
+
+
+async def test_list_nodes_filters_by_context(backend: SQLiteBackend) -> None:
+    work = make_node("work")
+    work.metadata = {"context": ["work"]}
+    home = make_node("home")
+    home.metadata = {"context": ["home"]}
+    await backend.create_node(work)
+    await backend.create_node(home)
+
+    assert {n.id for n in await backend.list_nodes()} == {"work", "home"}
+    assert [n.id for n in await backend.list_nodes(context=["work"])] == ["work"]
 
 
 async def test_concurrent_writes_are_serialized(backend: SQLiteBackend) -> None:

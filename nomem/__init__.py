@@ -9,8 +9,9 @@ bi-temporal knowledge graph with an explicit LLM-powered CRUD interface.
     graph.ingest(user="...", assistant="...")
     result = graph.retrieve("Kira")
 
-Status: Phase 1 — SQLite backend, nomic embedder, and Ollama extraction wired
-end-to-end. Decay and hierarchical retrieval are Phase 2.
+Status: Phase 2 — SQLite backend, nomic embedder, Ollama extraction, the decay
+pass, and hierarchical retrieval all work end-to-end. The PostgreSQL backend is
+the remaining Phase 2 deliverable.
 """
 
 from __future__ import annotations

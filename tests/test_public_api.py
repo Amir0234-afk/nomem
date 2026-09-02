@@ -64,9 +64,20 @@ async def test_ingest_and_retrieve_run_end_to_end(
     assert result.metadata["retrieval_mode"] == "flat"
 
 
-async def test_run_decay_is_phase_two(make_graph: Callable[..., MemoryGraph]) -> None:
-    with pytest.raises(NotImplementedError):
-        await make_graph().arun_decay()
+async def test_run_decay_runs(make_graph: Callable[..., MemoryGraph]) -> None:
+    g = make_graph(
+        llm_response={"entities": [{"label": "Kira", "type": "entity"}], "relations": []}
+    )
+    await g.aingest("x", "Kira waved.")
+    result = await g.arun_decay()
+    assert result.nodes_scored == 1
+    assert result.scores
+
+
+async def test_run_decay_raises_when_disabled(make_graph: Callable[..., MemoryGraph]) -> None:
+    g = make_graph(decay=None)
+    with pytest.raises(nomem.ConfigError):
+        await g.arun_decay()
 
 
 def test_sync_methods_reject_running_loop(make_graph: Callable[..., MemoryGraph]) -> None:

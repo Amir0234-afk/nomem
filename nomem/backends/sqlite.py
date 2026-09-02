@@ -385,6 +385,33 @@ class SQLiteBackend(BaseBackend):
             ).fetchall()
         return [self._row_to_node(r) for r in rows]
 
+    async def list_nodes(
+        self,
+        *,
+        active_only: bool = True,
+        context: list[str] | None = None,
+        as_of: datetime | None = None,
+    ) -> list[Node]:
+        async with self._lock:
+            nodes = await asyncio.to_thread(self._all_nodes_sync)
+        if as_of is not None:
+            nodes = [n for n in nodes if _active_at(n, as_of)]
+        elif active_only:
+            nodes = [n for n in nodes if n.valid_to is None]
+        if context:
+            wanted = set(context)
+            nodes = [
+                n for n in nodes if wanted & set(n.metadata.get("context", []))
+            ]
+        return nodes
+
+    def _all_nodes_sync(self) -> list[Node]:
+        with self._conn_guard:
+            rows = self._conn.execute(
+                "SELECT * FROM nodes WHERE user_id = ?", (self.user_id,)
+            ).fetchall()
+        return [self._row_to_node(r) for r in rows]
+
     async def traverse(
         self, seed_ids: list[str], hops: int, as_of: datetime | None = None
     ) -> SubGraph:
@@ -451,8 +478,46 @@ class SQLiteBackend(BaseBackend):
         )
 
     async def run_decay(self, config: DecayConfig) -> DecayResult:
-        raise NotImplementedError(
-            "SQLiteBackend.run_decay is a Phase 2 deliverable and is not implemented yet"
+        async with self._lock:
+            return await asyncio.to_thread(self._run_decay_sync, config)
+
+    def _run_decay_sync(self, config: DecayConfig) -> DecayResult:
+        from ..core.decay import score_node  # local import: avoids a package cycle
+
+        now = _now()
+        with self._conn_guard:
+            rows = self._conn.execute(
+                "SELECT * FROM nodes WHERE user_id = ? AND valid_to IS NULL", (self.user_id,)
+            ).fetchall()
+            nodes = [self._row_to_node(r) for r in rows]
+
+            scores: dict[str, float] = {}
+            prune_candidates: list[str] = []
+            for node in nodes:
+                new_score = score_node(node, config, now)
+                scores[node.id] = new_score
+                self._conn.execute(
+                    "UPDATE nodes SET importance = ? WHERE id = ?", (new_score, node.id)
+                )
+                if new_score < config.importance_floor:
+                    prune_candidates.append(node.id)
+
+            pruned: list[str] = []
+            if config.pruning:
+                for nid in prune_candidates:
+                    self._conn.execute(
+                        "UPDATE nodes SET valid_to = ? WHERE id = ? AND valid_to IS NULL",
+                        (_iso(now), nid),
+                    )
+                    pruned.append(nid)
+            self._conn.commit()
+
+        return DecayResult(
+            ran_at=now,
+            nodes_scored=len(nodes),
+            nodes_pruned=pruned,
+            prune_candidates=prune_candidates,
+            scores=scores,
         )
 
 

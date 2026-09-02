@@ -46,6 +46,15 @@ class PostgresBackend(BaseBackend):
     async def vector_search(self, embedding: Vector, top_k: int) -> list[Node]:
         raise NotImplementedError(_PHASE)
 
+    async def list_nodes(
+        self,
+        *,
+        active_only: bool = True,
+        context: list[str] | None = None,
+        as_of: datetime | None = None,
+    ) -> list[Node]:
+        raise NotImplementedError(_PHASE)
+
     async def traverse(
         self, seed_ids: list[str], hops: int, as_of: datetime | None = None
     ) -> SubGraph:
