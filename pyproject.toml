@@ -1,0 +1,63 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nomem"
+version = "0.0.0"
+description = "No One's Memory Management — persistent, self-updating knowledge-graph memory for LLM apps"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "No One's Studio" }]
+keywords = ["llm", "memory", "knowledge-graph", "rag", "agents"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+# Core has NO mandatory runtime dependencies. SQLite ships with CPython; the
+# default nomic embedder talks to a local Ollama over HTTP using the stdlib.
+dependencies = []
+
+[project.optional-dependencies]
+postgres = ["asyncpg>=0.29", "pgvector>=0.3"]
+neo4j = ["neo4j>=5.20"]
+openai = ["openai>=1.30"]
+
+[project.urls]
+Homepage = "https://github.com/no-ones-studio/nomem"
+Documentation = "https://github.com/no-ones-studio/nomem/tree/main/docs"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.2",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+    "mypy>=1.10",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["nomem"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["nomem", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+files = ["nomem"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
