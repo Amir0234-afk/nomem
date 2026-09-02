@@ -14,20 +14,37 @@ conversation — not an append-only log.
 nomem is **not** a vector database, an LLM wrapper, or a chat-history store. It is a graph
 database with an LLM-powered CRUD interface. The developer controls the rules.
 
-## Status: Phase 2 (in progress)
+## Status: Phase 2 complete
 
-Working end-to-end on the **SQLite backend**: Ollama-based extraction, entity resolution
-(embedding + near-exact string match), the bi-temporal node/edge schema, `as_of`
-historical retrieval, the opt-in cross-reference pass, the **decay pass**
-(`run_decay()` — scoring + optional pruning), and **hierarchical retrieval** (core index
-+ context-tag-routed situation sub-indexes). The **PostgreSQL backend** is the remaining
-Phase 2 deliverable. See [AGENT.md](AGENT.md) for the roadmap.
+Working end-to-end: Ollama-based extraction, entity resolution (embedding + near-exact
+string match), the bi-temporal node/edge schema, `as_of` historical retrieval, the
+opt-in cross-reference pass, the **decay pass** (`run_decay()` — scoring + optional
+pruning), and **hierarchical retrieval** (core index + context-tag-routed situation
+sub-indexes) — on **both the SQLite and PostgreSQL/pgvector backends**, which pass an
+identical behavioral contract suite. Phase 3 adds the Neo4j backend. See
+[AGENT.md](AGENT.md) for the roadmap.
+
+### PostgreSQL
+
+```bash
+docker compose up -d   # pgvector on :5433 (see docker-compose.yml)
+```
+```python
+MemoryGraph(
+    user_id="u1",
+    backend="postgres",
+    backend_options={"dsn": "postgresql://nomem:nomem@localhost:5433/nomem"},
+    embedder="nomic",
+)
+```
+The `nodes.embedding` column is `vector(N)` fixed at first use — use one database per
+embedding model.
 
 ## Install
 
 ```bash
 uv add nomem             # core: zero mandatory dependencies
-uv add "nomem[postgres]" # + asyncpg / pgvector   (Phase 2)
+uv add "nomem[postgres]" # + asyncpg / pgvector
 uv add "nomem[neo4j]"    #                          (Phase 3)
 uv add "nomem[openai]"   # OpenAI embedder
 ```

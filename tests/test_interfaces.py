@@ -35,18 +35,22 @@ def test_backend_interface_methods_present() -> None:
         assert callable(getattr(BaseBackend, name))
 
 
-@pytest.mark.parametrize("name", ["postgres", "neo4j"])
-async def test_unimplemented_backend_stubs_subclass_and_raise(name: str) -> None:
-    backend = resolve_backend(name)
+async def test_unimplemented_backend_stub_subclasses_and_raises() -> None:
+    backend = resolve_backend("neo4j")  # Phase 3
     assert isinstance(backend, BaseBackend)
     with pytest.raises(NotImplementedError):
         await backend.get_node("x")
 
 
-async def test_sqlite_backend_is_live() -> None:
-    backend = resolve_backend("sqlite", {"user_id": "u1", "path": ":memory:"})
-    assert isinstance(backend, BaseBackend)
-    assert await backend.get_node("missing") is None  # no NotImplementedError
+async def test_live_backends_construct_and_respond() -> None:
+    sqlite = resolve_backend("sqlite", {"user_id": "u1", "path": ":memory:"})
+    assert await sqlite.get_node("missing") is None  # no NotImplementedError
+
+    # PostgresBackend is implemented; it just needs connection details.
+    from nomem.exceptions import BackendError
+
+    with pytest.raises(BackendError):
+        resolve_backend("postgres", {"user_id": "u1"})  # missing dsn
 
 
 def test_all_backends_registered() -> None:

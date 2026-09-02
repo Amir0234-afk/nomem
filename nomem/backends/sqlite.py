@@ -20,13 +20,14 @@ import asyncio
 import json
 import sqlite3
 import threading
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from .._vector import cosine, pack, unpack
 from ..config import DecayConfig
 from ..exceptions import BackendError, EdgeNotFoundError, NodeNotFoundError
 from ..models import DecayResult, Edge, Node, SubGraph, Vector
+from ._common import active_at, bfs_subgraph, iso, now_utc, parse_ts
 from .base import BaseBackend
 
 _NODE_COLS = (
@@ -111,20 +112,6 @@ CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(user_id, target_id, valid_t
 """
 
 
-def _now() -> datetime:
-    return datetime.now(tz=UTC)
-
-
-def _iso(dt: datetime) -> str:
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UTC)
-    return dt.astimezone(UTC).isoformat()
-
-
-def _parse(value: str | None) -> datetime | None:
-    return datetime.fromisoformat(value) if value else None
-
-
 class SQLiteBackend(BaseBackend):
     """Zero-infra backend backed by a single SQLite file (or ``:memory:``)."""
 
@@ -163,10 +150,10 @@ class SQLiteBackend(BaseBackend):
             embedding=unpack(row["embedding"]),
             importance=row["importance"],
             access_count=row["access_count"],
-            last_accessed_at=_parse(row["last_accessed_at"]),  # type: ignore[arg-type]
-            created_at=_parse(row["created_at"]),  # type: ignore[arg-type]
-            valid_from=_parse(row["valid_from"]),  # type: ignore[arg-type]
-            valid_to=_parse(row["valid_to"]),
+            last_accessed_at=parse_ts(row["last_accessed_at"]),  # type: ignore[arg-type]
+            created_at=parse_ts(row["created_at"]),  # type: ignore[arg-type]
+            valid_from=parse_ts(row["valid_from"]),  # type: ignore[arg-type]
+            valid_to=parse_ts(row["valid_to"]),
             superseded_by=row["superseded_by"],
             resolution_source=row["resolution_source"],
             metadata=json.loads(row["metadata"]),
@@ -180,9 +167,9 @@ class SQLiteBackend(BaseBackend):
             target_id=row["target_id"],
             relation=row["relation"],
             weight=row["weight"],
-            created_at=_parse(row["created_at"]),  # type: ignore[arg-type]
-            valid_from=_parse(row["valid_from"]),  # type: ignore[arg-type]
-            valid_to=_parse(row["valid_to"]),
+            created_at=parse_ts(row["created_at"]),  # type: ignore[arg-type]
+            valid_from=parse_ts(row["valid_from"]),  # type: ignore[arg-type]
+            valid_to=parse_ts(row["valid_to"]),
             superseded_by=row["superseded_by"],
             metadata=json.loads(row["metadata"]),
         )
@@ -196,10 +183,10 @@ class SQLiteBackend(BaseBackend):
             pack(node.embedding),
             float(node.importance),
             int(node.access_count),
-            _iso(node.last_accessed_at),
-            _iso(node.created_at),
-            _iso(node.valid_from),
-            _iso(node.valid_to) if node.valid_to else None,
+            iso(node.last_accessed_at),
+            iso(node.created_at),
+            iso(node.valid_from),
+            iso(node.valid_to) if node.valid_to else None,
             node.superseded_by,
             node.resolution_source,
             json.dumps(node.metadata),
@@ -213,9 +200,9 @@ class SQLiteBackend(BaseBackend):
             edge.target_id,
             edge.relation,
             float(edge.weight),
-            _iso(edge.created_at),
-            _iso(edge.valid_from),
-            _iso(edge.valid_to) if edge.valid_to else None,
+            iso(edge.created_at),
+            iso(edge.valid_from),
+            iso(edge.valid_to) if edge.valid_to else None,
             edge.superseded_by,
             json.dumps(edge.metadata),
         )
@@ -281,12 +268,12 @@ class SQLiteBackend(BaseBackend):
                 raise NodeNotFoundError(node_id)
             node = self._row_to_node(row)
             if node.valid_to is None:
-                node.valid_to = _now()
+                node.valid_to = now_utc()
             if superseded_by is not None:
                 node.superseded_by = superseded_by
             self._conn.execute(
                 "UPDATE nodes SET valid_to = ?, superseded_by = ? WHERE id = ?",
-                (_iso(node.valid_to), node.superseded_by, node_id),
+                (iso(node.valid_to), node.superseded_by, node_id),
             )
             self._conn.commit()
         return node
@@ -303,7 +290,7 @@ class SQLiteBackend(BaseBackend):
         if row is None:
             return None
         node = self._row_to_node(row)
-        if as_of is not None and not _active_at(node, as_of):
+        if as_of is not None and not active_at(node, as_of):
             return None
         return node
 
@@ -356,12 +343,12 @@ class SQLiteBackend(BaseBackend):
                 raise EdgeNotFoundError(edge_id)
             edge = self._row_to_edge(row)
             if edge.valid_to is None:
-                edge.valid_to = _now()
+                edge.valid_to = now_utc()
             if superseded_by is not None:
                 edge.superseded_by = superseded_by
             self._conn.execute(
                 "UPDATE edges SET valid_to = ?, superseded_by = ? WHERE id = ?",
-                (_iso(edge.valid_to), edge.superseded_by, edge_id),
+                (iso(edge.valid_to), edge.superseded_by, edge_id),
             )
             self._conn.commit()
         return edge
@@ -395,7 +382,7 @@ class SQLiteBackend(BaseBackend):
         async with self._lock:
             nodes = await asyncio.to_thread(self._all_nodes_sync)
         if as_of is not None:
-            nodes = [n for n in nodes if _active_at(n, as_of)]
+            nodes = [n for n in nodes if active_at(n, as_of)]
         elif active_only:
             nodes = [n for n in nodes if n.valid_to is None]
         if context:
@@ -432,36 +419,13 @@ class SQLiteBackend(BaseBackend):
         nodes_by_id = {r["id"]: self._row_to_node(r) for r in node_rows}
         edges = [self._row_to_edge(r) for r in edge_rows]
         if as_of is not None:
-            nodes_by_id = {k: v for k, v in nodes_by_id.items() if _active_at(v, as_of)}
-            edges = [e for e in edges if _active_at(e, as_of)]
+            nodes_by_id = {k: v for k, v in nodes_by_id.items() if active_at(v, as_of)}
+            edges = [e for e in edges if active_at(e, as_of)]
         else:
             nodes_by_id = {k: v for k, v in nodes_by_id.items() if v.valid_to is None}
             edges = [e for e in edges if e.valid_to is None]
 
-        frontier = {sid for sid in seed_ids if sid in nodes_by_id}
-        visited = set(frontier)
-        kept_edges: dict[str, Edge] = {}
-        for _ in range(max(hops, 0)):
-            next_frontier: set[str] = set()
-            for edge in edges:
-                if edge.source_id in frontier and edge.target_id in nodes_by_id:
-                    kept_edges[edge.id] = edge
-                    if edge.target_id not in visited:
-                        next_frontier.add(edge.target_id)
-                if edge.target_id in frontier and edge.source_id in nodes_by_id:
-                    kept_edges[edge.id] = edge
-                    if edge.source_id not in visited:
-                        next_frontier.add(edge.source_id)
-            if not next_frontier:
-                break
-            visited |= next_frontier
-            frontier = next_frontier
-
-        return SubGraph(
-            nodes=[nodes_by_id[nid] for nid in visited if nid in nodes_by_id],
-            edges=list(kept_edges.values()),
-            metadata={"hops": max(hops, 0), "seed_node_ids": list(seed_ids)},
-        )
+        return bfs_subgraph(nodes_by_id, edges, seed_ids, hops)
 
     async def cross_reference(self, node: Node, threshold: float) -> list[tuple[Node, float]]:
         async with self._lock:
@@ -484,7 +448,7 @@ class SQLiteBackend(BaseBackend):
     def _run_decay_sync(self, config: DecayConfig) -> DecayResult:
         from ..core.decay import score_node  # local import: avoids a package cycle
 
-        now = _now()
+        now = now_utc()
         with self._conn_guard:
             rows = self._conn.execute(
                 "SELECT * FROM nodes WHERE user_id = ? AND valid_to IS NULL", (self.user_id,)
@@ -507,7 +471,7 @@ class SQLiteBackend(BaseBackend):
                 for nid in prune_candidates:
                     self._conn.execute(
                         "UPDATE nodes SET valid_to = ? WHERE id = ? AND valid_to IS NULL",
-                        (_iso(now), nid),
+                        (iso(now), nid),
                     )
                     pruned.append(nid)
             self._conn.commit()
@@ -520,11 +484,3 @@ class SQLiteBackend(BaseBackend):
             scores=scores,
         )
 
-
-def _active_at(record: Node | Edge, as_of: datetime) -> bool:
-    """True if ``record`` was recorded by ``as_of`` and its window contains it."""
-    if as_of.tzinfo is None:
-        as_of = as_of.replace(tzinfo=UTC)
-    if record.created_at > as_of or record.valid_from > as_of:
-        return False
-    return record.valid_to is None or record.valid_to > as_of

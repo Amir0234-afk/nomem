@@ -11,7 +11,7 @@ nomem/
 ├── models.py          # Node, Edge, SubGraph, IngestReceipt, DecayResult, pipeline intermediates
 ├── exceptions.py      # NomemError hierarchy
 ├── _http.py           # stdlib async JSON-over-HTTP (Ollama transport, no deps)
-├── _vector.py         # pack/unpack float blobs + cosine similarity
+├── _vector.py         # pack/unpack float blobs + cosine + mean
 ├── core/
 │   ├── extraction.py  # EntityExtractor (LLM call), EntityResolver (match against graph)
 │   ├── graph.py       # GraphCRUD — resolution outcomes -> CREATE/UPDATE/RETIRE + edges
@@ -19,8 +19,9 @@ nomem/
 │   └── decay.py       # score_node() formula + DecayEngine (delegates to backend.run_decay)
 ├── backends/
 │   ├── base.py        # BaseBackend ABC (the adapter contract)
+│   ├── _common.py     # shared bi-temporal filter (active_at) + BFS (bfs_subgraph)
 │   ├── sqlite.py      # Phase 1 · zero-infra default (stdlib sqlite3 + Python-side vectors)
-│   ├── postgres.py    # Phase 2 · pgvector
+│   ├── postgres.py    # Phase 2 · asyncpg + pgvector (vector index; BFS/decay in Python for parity)
 │   ├── neo4j.py       # Phase 3 · native graph
 │   └── __init__.py    # BACKEND_REGISTRY + resolve_backend()
 ├── embedders/
@@ -36,10 +37,11 @@ nomem/
     └── __init__.py    # LLM_REGISTRY + resolve_llm()
 ```
 
-`MemoryGraph.__init__` resolves the backend + embedder + LLM through the registries
-(injecting `user_id` into the backend), syncs `DecayConfig.mode` from the `decay=` knob,
-then constructs one instance each of `EntityExtractor`, `EntityResolver`, `GraphCRUD`,
-`Retriever`, and `DecayEngine`, sharing the resolved adapters.
+`MemoryGraph.__init__` resolves the embedder first, then the backend + LLM through the
+registries (injecting `user_id` and the embedder's `vector_dimensions` into the backend),
+syncs `DecayConfig.mode` from the `decay=` knob, and constructs one instance each of
+`EntityExtractor`, `EntityResolver`, `GraphCRUD`, `Retriever`, and `DecayEngine`, sharing
+the resolved adapters.
 
 ### Dimensions note
 

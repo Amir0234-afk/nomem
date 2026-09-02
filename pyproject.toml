@@ -58,7 +58,14 @@ strict = true
 warn_unreachable = true
 files = ["nomem"]
 
+[[tool.mypy.overrides]]
+module = ["asyncpg.*", "pgvector.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-markers = ["live: end-to-end tests that require a local Ollama (deselect with -m 'not live')"]
+markers = [
+    "live: end-to-end tests that require a local Ollama (deselect with -m 'not live')",
+    "postgres: tests that require a Postgres+pgvector DSN in NOMEM_TEST_POSTGRES_DSN",
+]

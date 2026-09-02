@@ -73,11 +73,16 @@ class MemoryGraph:
         # DecayConfig in sync so per-call overrides start from the right place.
         self.config.decay_config.mode = self.config.decay
 
-        backend_opts = {"user_id": uid, **self.config.backend_options}
+        self.embedder: BaseEmbedder = resolve_embedder(embedder, self.config.embedder_options)
+
+        backend_opts = {
+            "user_id": uid,
+            "vector_dimensions": self.embedder.dimensions,
+            **self.config.backend_options,
+        }
         self.backend: BaseBackend = (
             backend if isinstance(backend, BaseBackend) else resolve_backend(backend, backend_opts)
         )
-        self.embedder: BaseEmbedder = resolve_embedder(embedder, self.config.embedder_options)
         self.llm: BaseLLM = resolve_llm(None if llm == "ollama" else llm, self.config.llm_options)
 
         count_on_ingest = self.config.decay_config.count_on_ingest

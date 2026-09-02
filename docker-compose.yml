@@ -1,0 +1,24 @@
+# Dedicated Postgres + pgvector for nomem's test suite.
+#
+#   docker compose up -d
+#   export NOMEM_TEST_POSTGRES_DSN=postgresql://nomem:nomem@localhost:5433/nomem
+#   uv run pytest -m postgres
+#
+# Uses port 5433 to stay clear of a default local Postgres on 5432.
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: nomem-postgres
+    environment:
+      POSTGRES_USER: nomem
+      POSTGRES_PASSWORD: nomem
+      POSTGRES_DB: nomem
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nomem -d nomem"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    tmpfs:
+      - /var/lib/postgresql/data  # ephemeral — this is a throwaway test database
