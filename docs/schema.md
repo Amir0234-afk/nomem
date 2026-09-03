@@ -57,6 +57,12 @@ nomem tracks two timelines:
 **Hard deletes never happen.** Removal is always retirement: set `valid_to = now`, and
 `superseded_by` when a replacement exists.
 
+> **Current implementation note.** Each node/edge id is stored as **one row**, mutated in
+> place for `importance` / `access_count` / `last_accessed_at`. So `as_of=T` correctly
+> answers *which records were active and known at T* and follows supersession chains, but
+> it returns each record's *current* score fields, not their values as of T. Full
+> per-field version history is tracked in [ROADMAP.md](ROADMAP.md) as open question Q1.
+
 ### Worked example: a supersession chain
 
 ```

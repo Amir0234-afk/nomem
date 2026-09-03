@@ -107,9 +107,14 @@ The sync API is a thin wrapper over the async core.
 
 ## Docs
 
+Start at [docs/README.md](docs/README.md) for the index.
+
 | Doc | What |
 |---|---|
-| [docs/architecture.md](docs/architecture.md) | Module map + ingest / retrieval / decay pipelines |
+| [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) | Where the project stands — phases, what works, what's stubbed, deviations from AGENT.md |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Phase 4 / 5 tasks, known limitations, open design questions |
+| [docs/TESTING.md](docs/TESTING.md) | The 140-test suite, file by file, and how to run it |
+| [docs/architecture.md](docs/architecture.md) | Module map + ingest / retrieval / decay pipelines + the sync model |
 | [docs/schema.md](docs/schema.md) | Canonical `Node` / `Edge` / `SubGraph` schema + bi-temporal semantics |
 | [docs/adapters.md](docs/adapters.md) | Writing your own backend, embedder, or LLM |
 
