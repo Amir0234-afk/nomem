@@ -1,10 +1,11 @@
-# Dedicated Postgres + pgvector for nomem's test suite.
+# Dedicated backends for nomem's test suite. Both are throwaway (ephemeral
+# storage) and use non-default ports to stay clear of anything already running.
 #
 #   docker compose up -d
 #   export NOMEM_TEST_POSTGRES_DSN=postgresql://nomem:nomem@localhost:5433/nomem
-#   uv run pytest -m postgres
-#
-# Uses port 5433 to stay clear of a default local Postgres on 5432.
+#   export NOMEM_TEST_NEO4J_URI=bolt://localhost:7688
+#   export NOMEM_TEST_NEO4J_AUTH=neo4j:nomemtest123
+#   uv run pytest -m 'postgres or neo4j'
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -21,4 +22,22 @@ services:
       timeout: 3s
       retries: 10
     tmpfs:
-      - /var/lib/postgresql/data  # ephemeral — this is a throwaway test database
+      - /var/lib/postgresql/data  # ephemeral — throwaway test database
+
+  neo4j:
+    image: neo4j:5.26
+    container_name: nomem-neo4j
+    environment:
+      NEO4J_AUTH: neo4j/nomemtest123
+      NEO4J_server_memory_pagecache_size: 256M
+      NEO4J_server_memory_heap_max__size: 512M
+    ports:
+      - "7475:7474"
+      - "7688:7687"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    tmpfs:
+      - /data  # ephemeral — throwaway test database

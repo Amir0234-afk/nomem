@@ -41,8 +41,11 @@ The bundled backends:
 | Backend | Infra | Vector search | Notes |
 |---|---|---|---|
 | `sqlite` | none (file or `:memory:`) | Python cosine over all active nodes | default; blocking driver serialized behind a lock + worker threads |
-| `postgres` | Postgres + pgvector (`postgres` extra) | pgvector `<=>` cosine index | `vector(N)` column fixed at first schema create — one embedding model per database |
-| `neo4j` | — | — | Phase 3, stub |
+| `postgres` | Postgres + pgvector (`postgres` extra) | pgvector `<=>` cosine index | `vector(N)` column fixed at first schema create — one embedding model per database; `close()` is async |
+| `neo4j` | Neo4j 5 (`neo4j` extra) | native vector index (over-fetch + filter) | `(:Node)-[:EDGE {relation}]->(:Node)`; `metadata` stored as a JSON string; index dimension fixed at first create; `close()` is async |
+
+`MemoryGraph.aclose()` calls `backend.close()` (awaiting it if it's a coroutine); the
+SQLite `close()` is sync. Networked backends build their pool/driver lazily on first use.
 
 Register a custom backend so it can be named in config:
 

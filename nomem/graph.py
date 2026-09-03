@@ -10,6 +10,7 @@ The async methods are the real implementation; the sync methods delegate through
 
 from __future__ import annotations
 
+import inspect
 from datetime import datetime
 from typing import Any
 
@@ -169,6 +170,33 @@ class MemoryGraph:
     def run_decay(self, config: dict[str, Any] | None = None) -> DecayResult:
         """Sync wrapper over :meth:`arun_decay`."""
         return run_sync(self.arun_decay(config))
+
+    # --- lifecycle -------------------------------------------------
+
+    async def aclose(self) -> None:
+        """Release backend resources (connection pools, drivers)."""
+        close = getattr(self.backend, "close", None)
+        if close is None:
+            return
+        result = close()
+        if inspect.isawaitable(result):
+            await result
+
+    def close(self) -> None:
+        """Sync wrapper over :meth:`aclose`."""
+        run_sync(self.aclose())
+
+    async def __aenter__(self) -> MemoryGraph:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.aclose()
+
+    def __enter__(self) -> MemoryGraph:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
 
 
 __all__ = ["MemoryGraph"]

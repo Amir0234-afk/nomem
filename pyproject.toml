@@ -59,7 +59,7 @@ warn_unreachable = true
 files = ["nomem"]
 
 [[tool.mypy.overrides]]
-module = ["asyncpg.*", "pgvector.*"]
+module = ["asyncpg.*", "pgvector.*", "neo4j.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
@@ -68,4 +68,5 @@ testpaths = ["tests"]
 markers = [
     "live: end-to-end tests that require a local Ollama (deselect with -m 'not live')",
     "postgres: tests that require a Postgres+pgvector DSN in NOMEM_TEST_POSTGRES_DSN",
+    "neo4j: tests that require a Neo4j instance in NOMEM_TEST_NEO4J_URI",
 ]

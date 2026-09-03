@@ -1,7 +1,8 @@
 """Backend contract — every BaseBackend implementation must behave identically.
 
-Runs against SQLite always, and against PostgreSQL when
-``NOMEM_TEST_POSTGRES_DSN`` is set (see docker-compose.yml).
+Runs against SQLite always; against PostgreSQL when ``NOMEM_TEST_POSTGRES_DSN``
+is set; against Neo4j when ``NOMEM_TEST_NEO4J_URI`` (+ ``NOMEM_TEST_NEO4J_AUTH``,
+``user:password``) is set. See docker-compose.yml.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from nomem.backends.base import BaseBackend
+from nomem.backends.neo4j import Neo4jBackend
 from nomem.backends.postgres import PostgresBackend
 from nomem.backends.sqlite import SQLiteBackend
 from nomem.config import DecayConfig
@@ -21,6 +23,8 @@ from nomem.models import Edge, Node
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
 _PG_DSN = os.environ.get("NOMEM_TEST_POSTGRES_DSN")
+_NEO4J_URI = os.environ.get("NOMEM_TEST_NEO4J_URI")
+_NEO4J_AUTH = tuple((os.environ.get("NOMEM_TEST_NEO4J_AUTH") or "neo4j:").split(":", 1))
 
 
 def make_node(
@@ -61,8 +65,8 @@ def make_edge(eid: str, src: str, tgt: str, *, user: str = "u1", at: datetime = 
 BackendFactory = Callable[..., BaseBackend]
 
 
-async def _reset_pg_schema(dims: int) -> None:
-    """Drop nomem's tables so the suite can recreate them at ``dims``."""
+async def _reset_pg_schema() -> None:
+    """Drop nomem's tables so the suite can recreate them at a fresh dimension."""
     import asyncpg
 
     conn = await asyncpg.connect(_PG_DSN)
@@ -72,10 +76,24 @@ async def _reset_pg_schema(dims: int) -> None:
         await conn.close()
 
 
+async def _reset_neo4j() -> None:
+    """Wipe the graph + vector index so the suite can recreate it at a fresh dimension."""
+    import neo4j
+
+    driver = neo4j.AsyncGraphDatabase.driver(_NEO4J_URI, auth=_NEO4J_AUTH)
+    try:
+        async with driver.session() as session:
+            await session.run("MATCH (n) DETACH DELETE n")
+            await session.run("DROP INDEX nomem_node_embedding IF EXISTS")
+    finally:
+        await driver.close()
+
+
 @pytest.fixture(
     params=[
         "sqlite",
         pytest.param("postgres", marks=pytest.mark.postgres),
+        pytest.param("neo4j", marks=pytest.mark.neo4j),
     ]
 )
 async def backend_factory(request: pytest.FixtureRequest) -> AsyncIterator[BackendFactory]:
@@ -87,13 +105,25 @@ async def backend_factory(request: pytest.FixtureRequest) -> AsyncIterator[Backe
             pytest.skip("NOMEM_TEST_POSTGRES_DSN not set")
         pytest.importorskip("asyncpg")
         pytest.importorskip("pgvector")
-        await _reset_pg_schema(dims=3)
+        await _reset_pg_schema()
+    elif kind == "neo4j":
+        if not _NEO4J_URI:
+            pytest.skip("NOMEM_TEST_NEO4J_URI not set")
+        pytest.importorskip("neo4j")
+        await _reset_neo4j()
 
     def make(user_id: str = "u1") -> BaseBackend:
         if kind == "sqlite":
-            b: BaseBackend = SQLiteBackend(user_id=user_id, path=":memory:")
-        else:
-            b = PostgresBackend(user_id=user_id, dsn=_PG_DSN, vector_dimensions=3)
+            return _track(SQLiteBackend(user_id=user_id, path=":memory:"))
+        if kind == "postgres":
+            return _track(PostgresBackend(user_id=user_id, dsn=_PG_DSN, vector_dimensions=3))
+        return _track(
+            Neo4jBackend(
+                user_id=user_id, uri=_NEO4J_URI, auth=_NEO4J_AUTH, vector_dimensions=3
+            )
+        )
+
+    def _track(b: BaseBackend) -> BaseBackend:
         created.append(b)
         return b
 
@@ -281,22 +311,37 @@ async def test_concurrent_writes(backend: BaseBackend) -> None:
     assert len(hits) == 20
 
 
-@pytest.mark.postgres
-async def test_memorygraph_end_to_end_on_postgres() -> None:
-    """Full ingest -> retrieve -> decay through MemoryGraph on the Postgres backend."""
-    if not _PG_DSN:
-        pytest.skip("NOMEM_TEST_POSTGRES_DSN not set")
-    pytest.importorskip("asyncpg")
+@pytest.mark.parametrize(
+    "kind",
+    [
+        pytest.param("postgres", marks=pytest.mark.postgres),
+        pytest.param("neo4j", marks=pytest.mark.neo4j),
+    ],
+)
+async def test_memorygraph_end_to_end_on_networked_backend(kind: str) -> None:
+    """Full ingest -> retrieve -> decay through MemoryGraph on a networked backend."""
     from nomem import MemoryGraph
 
     from conftest import FakeEmbedder, FakeLLM
 
-    await _reset_pg_schema(dims=24)
+    if kind == "postgres":
+        if not _PG_DSN:
+            pytest.skip("NOMEM_TEST_POSTGRES_DSN not set")
+        pytest.importorskip("asyncpg")
+        await _reset_pg_schema()
+        opts = {"backend": "postgres", "backend_options": {"dsn": _PG_DSN}}
+    else:
+        if not _NEO4J_URI:
+            pytest.skip("NOMEM_TEST_NEO4J_URI not set")
+        pytest.importorskip("neo4j")
+        await _reset_neo4j()
+        opts = {
+            "backend": "neo4j",
+            "backend_options": {"uri": _NEO4J_URI, "auth": _NEO4J_AUTH},
+        }
 
     g = MemoryGraph(
-        user_id="pg-e2e",
-        backend="postgres",
-        backend_options={"dsn": _PG_DSN},
+        user_id=f"{kind}-e2e",
         embedder=FakeEmbedder(),
         llm=FakeLLM(
             {
@@ -308,13 +353,19 @@ async def test_memorygraph_end_to_end_on_postgres() -> None:
             }
         ),
         decay="combined",
+        **opts,  # type: ignore[arg-type]
     )
-    receipt = await g.aingest("news?", "Kira closed the merger.")
+    receipt = await g.aingest("news?", "Kira closed the merger.", context=["deals"])
     assert len(receipt.nodes_created) == 2
     assert len(receipt.edges_upserted) == 1
 
     result = await g.aretrieve("Kira")
     assert {n.label for n in result.nodes} == {"Kira", "the merger"}
+
+    routed = await g.aretrieve(
+        "Kira", config={"mode": "hierarchical", "core_index_size_floor": 1}, context=["deals"]
+    )
+    assert routed.metadata["sub_index_used"] == "deals"
 
     decayed = await g.arun_decay()
     assert decayed.nodes_scored == 2

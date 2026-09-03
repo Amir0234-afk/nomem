@@ -6,7 +6,7 @@
 nomem/
 ├── __init__.py        # public exports: MemoryGraph, models, config, exceptions
 ├── graph.py           # MemoryGraph — the public entry point (async core + sync wrappers)
-├── sync.py            # run_sync(): the only sync-over-async bridge
+├── sync.py            # run_sync() on one dedicated background loop (networked backends stay valid)
 ├── config.py          # MemoryGraphConfig / DecayConfig / IngestConfig / RetrievalConfig + merge()
 ├── models.py          # Node, Edge, SubGraph, IngestReceipt, DecayResult, pipeline intermediates
 ├── exceptions.py      # NomemError hierarchy
@@ -20,9 +20,9 @@ nomem/
 ├── backends/
 │   ├── base.py        # BaseBackend ABC (the adapter contract)
 │   ├── _common.py     # shared bi-temporal filter (active_at) + BFS (bfs_subgraph)
-│   ├── sqlite.py      # Phase 1 · zero-infra default (stdlib sqlite3 + Python-side vectors)
-│   ├── postgres.py    # Phase 2 · asyncpg + pgvector (vector index; BFS/decay in Python for parity)
-│   ├── neo4j.py       # Phase 3 · native graph
+│   ├── sqlite.py      # zero-infra default (stdlib sqlite3 + Python-side vectors)
+│   ├── postgres.py    # asyncpg + pgvector (vector index; BFS/decay in Python for parity)
+│   ├── neo4j.py       # bolt driver + vector index ((:Node)-[:EDGE]->; BFS/decay in Python)
 │   └── __init__.py    # BACKEND_REGISTRY + resolve_backend()
 ├── embedders/
 │   ├── base.py        # BaseEmbedder ABC
@@ -138,3 +138,14 @@ Nodes scoring `< importance_floor` are prune-*eligible* (`DecayResult.prune_cand
 they are retired — `valid_to` set, never hard-deleted — only when `pruning` is `True`
 (`DecayResult.nodes_pruned`). Defaults: α=0.6, β=0.4, λ=0.1, importance_floor=0.05,
 pruning off.
+
+## Sync API
+
+`ingest` / `retrieve` / `run_decay` / `close` and `with MemoryGraph(...)` are thin
+wrappers over the `a`-prefixed coroutines — there is no second implementation. They run
+through `nomem.sync.run_sync`, which drives the coroutine on **one dedicated background
+event loop** created on first use (a daemon thread), not a fresh `asyncio.run()` loop per
+call. asyncpg pools and the Neo4j driver bind their connections to the loop that created
+them, so a per-call loop would break the second sync call; the shared loop keeps them
+valid for the life of the process. Calling a sync method from inside a running event loop
+raises `NomemError` — use the async variant there.

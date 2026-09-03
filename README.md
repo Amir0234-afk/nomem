@@ -14,38 +14,44 @@ conversation — not an append-only log.
 nomem is **not** a vector database, an LLM wrapper, or a chat-history store. It is a graph
 database with an LLM-powered CRUD interface. The developer controls the rules.
 
-## Status: Phase 2 complete
+## Status: Phase 3 complete
 
 Working end-to-end: Ollama-based extraction, entity resolution (embedding + near-exact
 string match), the bi-temporal node/edge schema, `as_of` historical retrieval, the
 opt-in cross-reference pass, the **decay pass** (`run_decay()` — scoring + optional
 pruning), and **hierarchical retrieval** (core index + context-tag-routed situation
-sub-indexes) — on **both the SQLite and PostgreSQL/pgvector backends**, which pass an
-identical behavioral contract suite. Phase 3 adds the Neo4j backend. See
-[AGENT.md](AGENT.md) for the roadmap.
+sub-indexes) — on **all three backends** (SQLite, PostgreSQL/pgvector, Neo4j), which
+pass one identical behavioral contract suite. The **sync API** is a thin wrapper over
+the async core and stays valid across calls with networked backends. Phase 4 is
+packaging + docs. See [AGENT.md](AGENT.md) for the roadmap.
 
-### PostgreSQL
+### Backends other than SQLite
 
 ```bash
-docker compose up -d   # pgvector on :5433 (see docker-compose.yml)
+docker compose up -d   # pgvector on :5433, Neo4j on :7688 (see docker-compose.yml)
 ```
 ```python
 MemoryGraph(
-    user_id="u1",
+    user_id="u1", embedder="nomic",
     backend="postgres",
     backend_options={"dsn": "postgresql://nomem:nomem@localhost:5433/nomem"},
-    embedder="nomic",
+)
+MemoryGraph(
+    user_id="u1", embedder="nomic",
+    backend="neo4j",
+    backend_options={"uri": "bolt://localhost:7688", "auth": ("neo4j", "nomemtest123")},
 )
 ```
-The `nodes.embedding` column is `vector(N)` fixed at first use — use one database per
-embedding model.
+Each keeps its vector store at one fixed dimension — use a dedicated database per
+embedding model. Close networked backends with `graph.close()` / `await graph.aclose()`,
+or use `with` / `async with`.
 
 ## Install
 
 ```bash
 uv add nomem             # core: zero mandatory dependencies
 uv add "nomem[postgres]" # + asyncpg / pgvector
-uv add "nomem[neo4j]"    #                          (Phase 3)
+uv add "nomem[neo4j]"    # + neo4j driver
 uv add "nomem[openai]"   # OpenAI embedder
 ```
 

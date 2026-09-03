@@ -9,9 +9,10 @@ bi-temporal knowledge graph with an explicit LLM-powered CRUD interface.
     graph.ingest(user="...", assistant="...")
     result = graph.retrieve("Kira")
 
-Status: Phase 2 complete — the SQLite and PostgreSQL/pgvector backends, nomic
-embedder, Ollama extraction, the decay pass, and hierarchical retrieval all work
-end-to-end. Phase 3 adds the Neo4j backend and sync/async parity polish.
+Status: Phase 3 complete — all three backends (SQLite, PostgreSQL/pgvector,
+Neo4j), nomic embedder, Ollama extraction, decay, hierarchical retrieval, and a
+full sync API (thin wrapper over the async core, safe with networked backends).
+Phase 4 is packaging + docs.
 """
 
 from __future__ import annotations
