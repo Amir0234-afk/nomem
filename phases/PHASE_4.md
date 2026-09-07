@@ -128,25 +128,25 @@ doesn't read as unfinished.
 
 ---
 
-## Part C — Package and publish
+## Part C — Package and publish (built; upload pending)
 
 - [ ] Reserve `nomem` on PyPI. It was unclaimed as of 2026-09-07 — do this before anything
       else in Part C
-- [ ] `pyproject.toml`: real `authors`, `license = "MIT"`, `urls` (Homepage, Source,
+- [x] `pyproject.toml`: real `authors`, `license = "MIT"`, `urls` (Homepage, Source,
       Issues), `Development Status :: 4 - Beta`, keywords, `readme`
 - [x] `LICENSE` — MIT, No One's Studio
-- [ ] Version `0.1.0`. `__version__` reads `importlib.metadata.version("nomem")`; update
+- [x] Version `0.1.0`. `__version__` reads `importlib.metadata.version("nomem")`; update
       the `test_public_api.py` assertion that pins `"0.0.0"`
-- [ ] Extras after the openai removal: `postgres`, `neo4j` only (**the `openai` extra is
+- [x] Extras after the openai removal: `postgres`, `neo4j` only (**the `openai` extra is
       already gone**). Confirm the `neo4j` floor
       (resolves to 6.x today — raise it or cap it), the `pgvector` floor, and
       `pytest-asyncio` 1.x config
-- [ ] `examples/quickstart.py` — SQLite `:memory:` + `CallableEmbedder` + `CallableLLM`,
+- [x] `examples/quickstart.py` — SQLite `:memory:` + `CallableEmbedder` + `CallableLLM`,
       runs with **no Ollama and no Docker**
-- [ ] `examples/quickstart_ollama.py` — the real thing
-- [ ] `CHANGELOG.md`, `CONTRIBUTING.md`, and a `README.md` that works as the PyPI long
+- [x] `examples/quickstart_ollama.py` — the real thing
+- [x] `CHANGELOG.md`, `CONTRIBUTING.md`, and a `README.md` that works as the PyPI long
       description
-- [ ] CI: GitHub Actions — `ruff` + `mypy --strict` + hermetic `pytest` on 3.11/3.12/3.13;
+- [x] CI: GitHub Actions — `ruff` + `mypy --strict` + hermetic `pytest` on 3.11/3.12/3.13;
       a second job with `services:` for pgvector + Neo4j; keep `live` manual
 - [ ] `uv build`, `twine check`, publish to **Test PyPI**, install from it into a clean
       venv, run the quickstart

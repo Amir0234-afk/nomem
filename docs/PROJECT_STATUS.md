@@ -1,6 +1,6 @@
 # nomem — Project Status
 
-*Snapshot date: 2026-09-07 · Version `0.0.0` (unreleased) · Branch: `master`*
+*Snapshot date: 2026-09-07 · Version `0.1.0` (built, not yet uploaded) · Branch: `master`*
 
 This document is the single source of truth for **where the project stands**: what is
 built, what works, what is stubbed, where the implementation deviates from
@@ -197,10 +197,10 @@ shape below is what `0.1.0` freezes. Spec:
 | Cross-user graph queries | **not started** — paid tier, later | — |
 | Team namespacing / multi-tenant isolation | **not started** — paid tier, later | — |
 | nomem Cloud managed backend | **not started** — paid tier, last | — |
-| PyPI package / quickstart / `CHANGELOG` | **not started** (Phase 4 Part C). The name `nomem` was unclaimed on PyPI as of 2026-09-07. `LICENSE` (MIT) is in place; `version` is still `0.0.0` | [pyproject.toml](../pyproject.toml) |
+| PyPI package / quickstart / `CHANGELOG` | ✅ **built** (Phase 4 Part C): `version = "0.1.0"`, full metadata, `LICENSE` (MIT), `CHANGELOG.md`, `CONTRIBUTING.md`, and two quickstarts — one with no services at all. **Not yet uploaded**; the name `nomem` was unclaimed on PyPI as of 2026-09-07 | [pyproject.toml](../pyproject.toml), [examples/](../examples/) |
 | Docs site | **not started** — explicitly **not** a release blocker | — |
-| CI (GitHub Actions) | **not set up** | — |
-| `neo4j` extra pin | `neo4j>=5.20` resolves to **6.3.0** locally; API-compatible, works, but the floor should be raised/verified | [pyproject.toml](../pyproject.toml) |
+| CI (GitHub Actions) | ✅ **set up** — hermetic matrix (3.11/3.12/3.13, no extras), a real pgvector + Neo4j job, and a build job that installs the wheel into a clean venv and runs the quickstart. `live` stays manual | [.github/workflows/ci.yml](../.github/workflows/ci.yml) |
+| `neo4j` extra pin | ✅ **decided**: `neo4j>=5.20,<7`. The cap admits the 6.x the suite actually runs against (6.3.0 locally, API-compatible) and stops 7.x arriving unannounced | [pyproject.toml](../pyproject.toml) |
 
 ---
 

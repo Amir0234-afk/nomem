@@ -179,7 +179,8 @@ sub-index (+ core), sets `metadata["sub_index_used"]`; re-ingest merges context 
 
 ### `test_public_api.py` — 11 tests
 
-`MemoryGraph` surface: `__version__ == "0.0.0"`; constructs with named backend/embedder
+`MemoryGraph` surface: `__version__` matches installed package metadata; constructs with
+named backend/embedder
 (`vector_dimensions` injected, `backend.user_id` set); method signatures via
 `inspect.signature`; ingest→retrieve round trip returns the graph; `run_decay` runs;
 `run_decay` with `decay=None` → `ConfigError`; sync method inside a running loop →
@@ -244,13 +245,14 @@ uv run pytest -q tests/test_backend_contract.py -k neo4j
 Everything Parts A and B called for has landed: the contract suite went from 19 shared
 tests to 24 (59 → 74 parametrized), `test_plugins.py` is new, and the surface-lock,
 manual-mode, `edge_types`, `resolution_strategy`, `stats()`, and OpenAI-embedder tests
-are all in place. Two items are left, both belonging to
-[`../phases/PHASE_4.md`](../phases/PHASE_4.md) **Part C**:
+are all in place. Part C closed the last two:
 
-| Item | What changes |
+| Item | State |
 |---|---|
-| `test_public_api.py::test_version` | `__version__ == "0.0.0"` becomes a read of the installed package metadata when the version bumps to `0.1.0` |
-| CI | GitHub Actions: `ruff` + `mypy --strict` + the hermetic run on 3.11/3.12/3.13, plus a second job with `services:` for pgvector and Neo4j. `live` stays manual |
+| `test_public_api.py::test_version` | ✅ asserts `nomem.__version__ == importlib.metadata.version("nomem")` rather than a literal, so the package and the module cannot drift |
+| CI | ✅ [`.github/workflows/ci.yml`](../.github/workflows/ci.yml): a hermetic matrix (3.11/3.12/3.13, **no extras**, so the "no mandatory dependencies" claim is tested too), a `services:` job against real pgvector + Neo4j, and a build job that installs the wheel into a clean venv and runs the quickstart from it. `live` stays manual |
+
+Nothing in the suite is now pending for `0.1.0`.
 
 ## Gaps in coverage
 
@@ -258,8 +260,8 @@ are all in place. Two items are left, both belonging to
 - No test for the `_http.py` error paths (network failures) — marked `# pragma: no cover`.
   The OpenAI embedder is covered through a stubbed `post_json`, so its own transport is
   exercised only as far as the arguments it passes.
-- **No CI config**, so the full run only happens where all services are present. This is a
-  Phase 4 blocker: a suite that only passes on one machine is not a release gate.
+- The `live` (Ollama) tests do **not** run in CI — they need a local model server, so the
+  three of them only run where someone has Ollama. Everything else is covered.
 - Concurrency test is 20 writes; no stress test for read/write interleaving under load.
 - Nothing exercises a *third-party* backend implementing the ABC from scratch — the
   contract suite only ever runs against the three bundled ones, so a gap between "the

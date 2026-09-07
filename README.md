@@ -25,12 +25,12 @@ PostgreSQL/pgvector, Neo4j), which pass one identical behavioral contract suite.
 **sync API** is a thin wrapper over the async core and stays valid across calls with
 networked backends.
 
-Phase 4 Parts A and B are done: `BaseBackend` has its final **14-method** shape, graph
-dumps round-trip (retired records included), `nomem.plugins` mounts third-party
-capability at `graph.<namespace>`, and no config field is inert. What remains is Part C —
-version `0.1.0`, quickstarts, CI, and the PyPI upload
-([`phases/PHASE_4.md`](phases/PHASE_4.md)). **Until then this is unreleased**: the package
-is not on PyPI.
+Phase 4 is complete: `BaseBackend` has its final **14-method** shape, graph dumps
+round-trip (retired records included), `nomem.plugins` mounts third-party capability at
+`graph.<namespace>`, no config field is inert, and the package builds as `0.1.0` with CI
+covering 3.11–3.13, real pgvector and Neo4j, and a wheel-install smoke test
+([`phases/PHASE_4.md`](phases/PHASE_4.md)). **The one step left is the upload** — until
+then, install from source rather than PyPI.
 
 ### Backends other than SQLite
 
