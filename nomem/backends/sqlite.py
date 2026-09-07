@@ -26,7 +26,7 @@ from typing import Any
 from .._vector import cosine, pack, unpack
 from ..config import DecayConfig
 from ..exceptions import BackendError, EdgeNotFoundError, NodeNotFoundError
-from ..models import DecayResult, Edge, Node, SubGraph, Vector
+from ..models import DecayResult, Edge, Node, PurgeResult, SubGraph, Vector
 from ._common import active_at, bfs_subgraph, iso, now_utc, parse_ts
 from .base import BaseBackend
 
@@ -353,6 +353,43 @@ class SQLiteBackend(BaseBackend):
             self._conn.commit()
         return edge
 
+    async def get_edge(self, edge_id: str, as_of: datetime | None = None) -> Edge | None:
+        async with self._lock:
+            return await asyncio.to_thread(self._get_edge_sync, edge_id, as_of)
+
+    def _get_edge_sync(self, edge_id: str, as_of: datetime | None) -> Edge | None:
+        with self._conn_guard:
+            row = self._conn.execute(
+                "SELECT * FROM edges WHERE id = ? AND user_id = ?", (edge_id, self.user_id)
+            ).fetchone()
+        if row is None:
+            return None
+        edge = self._row_to_edge(row)
+        if as_of is not None and not active_at(edge, as_of):
+            return None
+        return edge
+
+    async def list_edges(
+        self,
+        *,
+        active_only: bool = True,
+        as_of: datetime | None = None,
+    ) -> list[Edge]:
+        async with self._lock:
+            edges = await asyncio.to_thread(self._all_edges_sync)
+        if as_of is not None:
+            return [e for e in edges if active_at(e, as_of)]
+        if active_only:
+            return [e for e in edges if e.valid_to is None]
+        return edges
+
+    def _all_edges_sync(self) -> list[Edge]:
+        with self._conn_guard:
+            rows = self._conn.execute(
+                "SELECT * FROM edges WHERE user_id = ?", (self.user_id,)
+            ).fetchall()
+        return [self._row_to_edge(r) for r in rows]
+
     # --- search + traversal -------------------------------------
 
     async def vector_search(self, embedding: Vector, top_k: int) -> list[Node]:
@@ -483,4 +520,26 @@ class SQLiteBackend(BaseBackend):
             prune_candidates=prune_candidates,
             scores=scores,
         )
+
+    # --- the one hard-delete path -------------------------------
+
+    async def purge_user(self, user_id: str) -> PurgeResult:
+        """Hard-delete every row for ``user_id``. See :meth:`BaseBackend.purge_user`."""
+        if user_id != self.user_id:
+            raise BackendError(
+                f"purge_user {user_id!r} does not match backend user {self.user_id!r}"
+            )
+        async with self._lock:
+            return await asyncio.to_thread(self._purge_user_sync)
+
+    def _purge_user_sync(self) -> PurgeResult:
+        with self._conn_guard:
+            edges = self._conn.execute(
+                "DELETE FROM edges WHERE user_id = ?", (self.user_id,)
+            ).rowcount
+            nodes = self._conn.execute(
+                "DELETE FROM nodes WHERE user_id = ?", (self.user_id,)
+            ).rowcount
+            self._conn.commit()
+        return PurgeResult(nodes_deleted=max(nodes, 0), edges_deleted=max(edges, 0))
 

@@ -33,7 +33,9 @@ class DecayConfig:
     lambda_: float = 0.1  # AGENT.md default: decay rate (higher = faster decay)
     importance_floor: float = 0.05  # AGENT.md default: below this -> prune-eligible
     pruning: bool = False  # AGENT.md default: pruning is OFF; dev opts in
-    decay_schedule: str | None = None  # AGENT.md default: nomem does not self-schedule
+    # Inert **by design**: metadata for the dev's own cron/scheduler. nomem never
+    # self-schedules a decay pass — `graph.run_decay()` is the only trigger.
+    decay_schedule: str | None = None
     count_on_ingest: bool = False  # AGENT.md default: access_count increments on retrieve only
     mode: DecayMode = "combined"  # set from MemoryGraph(decay=...); None disables run_decay
 
@@ -52,13 +54,12 @@ class IngestConfig:
     extraction_model: str | None = None  # None -> backend/global default cheap model
     edge_types: list[str] | None = None  # None -> track any relation the extractor emits
     importance_floor: float = 0.0  # extractions below this are held in queued_writes
-    resolution_strategy: str = "embedding+string"  # match strategy identifier
+    resolution_strategy: str = "hybrid"  # "embedding" | "string" | "hybrid" (= max of both)
     resolution_confidence_threshold: float = 0.75  # >= -> auto-resolve to the match
     ambiguity_floor: float = 0.5  # [floor, threshold) -> ambiguous; < floor -> treated as new
     string_match_min: float = 0.8  # surface-form ratio below this is ignored (embedding only)
     cross_reference_threshold: float = 0.85  # cross-ref pass: create edge when sim >= this
     on_ambiguous: str = "queue"  # "queue" (dev review) | "create" (new node anyway)
-    embed_immediately: bool = True  # False -> defer embedding to a later batch pass
     cross_reference: bool = False  # AGENT.md: write-boundary cross-reference is opt-in
 
     def __post_init__(self) -> None:
@@ -69,6 +70,10 @@ class IngestConfig:
             raise ConfigError("ambiguity_floor must be <= resolution_confidence_threshold")
         if self.on_ambiguous not in ("queue", "create"):
             raise ConfigError("on_ambiguous must be 'queue' or 'create'")
+        if self.resolution_strategy not in ("embedding", "string", "hybrid"):
+            raise ConfigError(
+                "resolution_strategy must be 'embedding' | 'string' | 'hybrid'"
+            )
 
 
 @dataclass

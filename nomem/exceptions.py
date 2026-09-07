@@ -28,6 +28,15 @@ class EdgeNotFoundError(BackendError):
     """An edge id (optionally ``as_of`` a timestamp) has no matching record."""
 
 
+class NotSupportedError(NomemError):
+    """An adapter does not implement an optional capability.
+
+    Raised by the default :meth:`~nomem.backends.base.BaseBackend.purge_user`
+    body: the method is public and non-abstract so a custom backend need not
+    implement it, but calling it on one that hasn't is an error, not a no-op.
+    """
+
+
 class EmbedderError(NomemError):
     """An embedder adapter failed to produce a vector."""
 

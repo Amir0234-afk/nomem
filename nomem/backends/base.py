@@ -24,7 +24,8 @@ from datetime import datetime
 from typing import Any
 
 from ..config import DecayConfig
-from ..models import DecayResult, Edge, Node, SubGraph, Vector
+from ..exceptions import NotSupportedError
+from ..models import DecayResult, Edge, Node, PurgeResult, SubGraph, Vector
 
 
 class BaseBackend(ABC):
@@ -55,6 +56,14 @@ class BaseBackend(ABC):
         """Retire an edge: set ``valid_to = now`` (+ ``superseded_by``). Never delete."""
 
     @abstractmethod
+    async def get_edge(self, edge_id: str, as_of: datetime | None = None) -> Edge | None:
+        """Return an edge as known at ``as_of`` (or now), or ``None`` if absent.
+
+        The node-side counterpart is :meth:`get_node`; the temporal rule is the
+        same one :func:`nomem.backends._common.active_at` implements.
+        """
+
+    @abstractmethod
     async def vector_search(self, embedding: Vector, top_k: int) -> list[Node]:
         """Return the ``top_k`` active nodes most similar to ``embedding``."""
 
@@ -74,6 +83,22 @@ class BaseBackend(ABC):
         """
 
     @abstractmethod
+    async def list_edges(
+        self,
+        *,
+        active_only: bool = True,
+        as_of: datetime | None = None,
+    ) -> list[Edge]:
+        """Enumerate this user's edges.
+
+        ``as_of`` applies the same temporal filter as :meth:`get_edge` and takes
+        precedence over ``active_only``; ``active_only=False`` without ``as_of``
+        returns every edge on record, retired ones included. Enumeration — not
+        seed-based :meth:`traverse` — is what a full graph dump needs to
+        round-trip retired records.
+        """
+
+    @abstractmethod
     async def traverse(
         self, seed_ids: list[str], hops: int, as_of: datetime | None = None
     ) -> SubGraph:
@@ -86,3 +111,25 @@ class BaseBackend(ABC):
     @abstractmethod
     async def run_decay(self, config: DecayConfig) -> DecayResult:
         """Run one decay/pruning pass over this user's nodes per ``config``."""
+
+    # --- the one hard-delete path ----------------------------------
+
+    async def purge_user(self, user_id: str) -> PurgeResult:
+        """Really delete every row for ``user_id``. **Not** part of retirement.
+
+        This is the single exception to "nomem never hard-deletes", and it
+        exists so GDPR right-to-forget can be built as a plugin instead of a
+        fork. It is deliberately fenced:
+
+        * it is **not abstract** — a custom backend may leave this default body,
+          which raises :class:`~nomem.exceptions.NotSupportedError`;
+        * implementations must raise :class:`~nomem.exceptions.BackendError`
+          unless ``user_id`` matches the backend's own user;
+        * it is **unreachable from** :class:`nomem.MemoryGraph` and
+          ``GraphCRUD``, and a guard test asserts it stays that way. A backend
+          handle is not the public API.
+        """
+        raise NotSupportedError(
+            f"{type(self).__name__} does not implement purge_user; "
+            "nomem retires records via valid_to and never hard-deletes"
+        )

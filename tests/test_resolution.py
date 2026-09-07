@@ -104,3 +104,54 @@ async def test_on_ambiguous_strategy(
         assert len(receipt.nodes_created) == 1
     else:
         assert receipt.nodes_created == []
+
+
+@pytest.mark.parametrize(
+    ("strategy", "expect_source"),
+    # No candidate clears the bar under "embedding", so that outcome is a new
+    # entity, whose source is the extractor itself.
+    [("embedding", "llm"), ("string", "string_match"), ("hybrid", "string_match")],
+)
+async def test_resolution_strategy_switches_scoring(
+    make_graph: Callable[..., MemoryGraph], strategy: str, expect_source: str
+) -> None:
+    """ROADMAP Q5: each branch actually changes the score, not just the label.
+
+    "Kiera" vs "Kira" is a near-identical surface form that the bag-of-words
+    embedder scores at zero — so the strategies disagree by construction.
+    """
+    g = make_graph()
+    emb = await FakeEmbedder().embed("Kira")
+    await g.crud.create_node(
+        g.crud._build_node(ExtractedEntity(label="Kira", type="entity"), emb, "manual")
+    )
+    entity = ExtractedEntity(label="Kiera", type="entity")
+
+    (outcome,) = await g.resolver.resolve(
+        [entity], IngestConfig(resolution_strategy=strategy, resolution_confidence_threshold=0.75)
+    )
+    if strategy == "embedding":
+        assert outcome.confidence == 0.0  # different token -> orthogonal vectors
+        assert outcome.resolved_node_id is None
+    else:
+        assert outcome.confidence >= 0.8  # surface-form match carries it
+        assert outcome.resolved_node_id is not None
+    assert outcome.resolution_source == expect_source
+
+
+async def test_string_strategy_ignores_a_semantic_only_match(
+    make_graph: Callable[..., MemoryGraph],
+) -> None:
+    """The mirror case: identical vectors, unrelated spellings."""
+    g = make_graph()
+    emb = await FakeEmbedder().embed("Kira")
+    await g.crud.create_node(
+        g.crud._build_node(ExtractedEntity(label="Kira", type="entity"), emb, "manual")
+    )
+    # Same label text -> cosine 1.0, so only the "string" branch can be made to differ.
+    (embedding_hit,) = await g.resolver.resolve(
+        [ExtractedEntity(label="Kira", type="entity")],
+        IngestConfig(resolution_strategy="embedding"),
+    )
+    assert embedding_hit.resolved_node_id is not None
+    assert embedding_hit.confidence == pytest.approx(1.0)

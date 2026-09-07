@@ -28,6 +28,7 @@ from .exceptions import (
     HardDeleteNotSupportedError,
     NodeNotFoundError,
     NomemError,
+    NotSupportedError,
     ResolutionError,
     RetrievalBudgetExceededError,
 )
@@ -39,9 +40,11 @@ from .models import (
     ExtractedRelation,
     IngestReceipt,
     Node,
+    PurgeResult,
     ResolutionOutcome,
     SubGraph,
 )
+from .plugins import Plugin
 
 __version__ = "0.0.0"
 
@@ -65,6 +68,9 @@ __all__ = [
     "Node",
     "NodeNotFoundError",
     "NomemError",
+    "NotSupportedError",
+    "Plugin",
+    "PurgeResult",
     "ResolutionError",
     "ResolutionOutcome",
     "RetrievalBudgetExceededError",

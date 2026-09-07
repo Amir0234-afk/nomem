@@ -22,7 +22,7 @@ async def test_parses_entities_and_relations() -> None:
             ],
         }
     )
-    entities, relations = await EntityExtractor(llm=llm).extract("u", "a", IngestConfig())
+    entities, relations, _ = await EntityExtractor(llm=llm).extract("u", "a", IngestConfig())
     assert [e.label for e in entities] == ["Kira", "moved out"]
     assert entities[1].negated is True
     assert relations[0].relation == "involves"
@@ -36,7 +36,7 @@ async def test_drops_relations_with_unknown_endpoints() -> None:
             "relations": [{"source": "Kira", "target": "Ghost", "relation": "knows"}],
         }
     )
-    _, relations = await EntityExtractor(llm=llm).extract("u", "a", IngestConfig())
+    _, relations, _ = await EntityExtractor(llm=llm).extract("u", "a", IngestConfig())
     assert relations == []
 
 
@@ -50,14 +50,42 @@ async def test_dedupes_entities_case_insensitively() -> None:
             "relations": [],
         }
     )
-    entities, _ = await EntityExtractor(llm=llm).extract("u", "a", IngestConfig())
+    entities, _, _ = await EntityExtractor(llm=llm).extract("u", "a", IngestConfig())
     assert len(entities) == 1
 
 
 async def test_unknown_type_falls_back_to_entity() -> None:
     llm = FakeLLM({"entities": [{"label": "X", "type": "banana"}], "relations": []})
-    entities, _ = await EntityExtractor(llm=llm).extract("u", "a", IngestConfig())
+    entities, _, _ = await EntityExtractor(llm=llm).extract("u", "a", IngestConfig())
     assert entities[0].type == "entity"
+
+
+async def test_edge_types_filters_relations() -> None:
+    """ROADMAP Q5: relations outside the allowed set are dropped and counted."""
+    llm = FakeLLM(
+        {
+            "entities": [
+                {"label": "Kira", "type": "entity"},
+                {"label": "Lisbon", "type": "entity"},
+            ],
+            "relations": [
+                {"source": "Kira", "target": "Lisbon", "relation": "lives_in"},
+                {"source": "Lisbon", "target": "Kira", "relation": "gossips_about"},
+            ],
+        }
+    )
+    extractor = EntityExtractor(llm=llm)
+
+    _, kept, dropped = await extractor.extract("u", "a", IngestConfig(edge_types=["lives_in"]))
+    assert [r.relation for r in kept] == ["lives_in"]
+    assert dropped == 1
+
+    _, all_kept, none_dropped = await extractor.extract("u", "a", IngestConfig())
+    assert len(all_kept) == 2  # edge_types=None keeps everything
+    assert none_dropped == 0
+
+    _, nothing, both = await extractor.extract("u", "a", IngestConfig(edge_types=[]))
+    assert nothing == [] and both == 2
 
 
 async def test_malformed_payload_raises() -> None:

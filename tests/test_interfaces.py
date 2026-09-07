@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from nomem.backends import BACKEND_REGISTRY, resolve_backend
 from nomem.backends.base import BaseBackend
@@ -9,17 +11,23 @@ from nomem.embedders import EMBEDDER_REGISTRY, CallableEmbedder, resolve_embedde
 from nomem.embedders.base import BaseEmbedder
 from nomem.exceptions import ConfigError
 
+# The frozen 0.1.0 contract: 14 methods, 13 abstract + purge_user.
+# See docs/stability.md — no new abstract method before 0.2.0.
 BACKEND_METHODS = [
     "create_node",
     "update_node",
     "retire_node",
     "get_node",
+    "list_nodes",
     "upsert_edge",
     "retire_edge",
+    "get_edge",
+    "list_edges",
     "vector_search",
     "traverse",
     "cross_reference",
     "run_decay",
+    "purge_user",
 ]
 
 
@@ -33,6 +41,9 @@ def test_base_classes_are_abstract() -> None:
 def test_backend_interface_methods_present() -> None:
     for name in BACKEND_METHODS:
         assert callable(getattr(BaseBackend, name))
+    assert len(BACKEND_METHODS) == 14
+    # purge_user is public but optional — everything else must be implemented.
+    assert BaseBackend.__abstractmethods__ == frozenset(BACKEND_METHODS) - {"purge_user"}
 
 
 async def test_sqlite_backend_constructs_and_responds() -> None:
@@ -56,10 +67,59 @@ def test_all_backends_registered() -> None:
 
 async def test_embedder_registry_entries_construct() -> None:
     assert resolve_embedder("nomic").dimensions == 768
-    assert resolve_embedder("openai").dimensions > 0
-    with pytest.raises(NotImplementedError):
-        await resolve_embedder("openai").embed("hello")  # requires the 'openai' extra
+    assert resolve_embedder("openai").dimensions == 1536
     assert set(EMBEDDER_REGISTRY) == {"nomic", "openai"}
+
+
+async def test_openai_embedder(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Plain HTTP, no `openai` extra — exercised against a stubbed transport."""
+    import nomem.embedders.openai as openai_mod
+    from nomem.embedders.openai import OpenAIEmbedder
+    from nomem.exceptions import EmbedderError
+
+    seen: dict[str, Any] = {}
+
+    async def fake_post(url: str, payload: Any, **kwargs: Any) -> dict[str, Any]:
+        seen["url"] = url
+        seen["payload"] = payload
+        seen["headers"] = kwargs.get("headers")
+        # Returned out of order on purpose: `index` is what orders the result.
+        vectors = [[1.0, 0.0], [0.0, 1.0]][: len(payload["input"])]
+        return {
+            "data": [
+                {"index": i, "embedding": v} for i, v in reversed(list(enumerate(vectors)))
+            ]
+        }
+
+    monkeypatch.setattr(openai_mod, "post_json", fake_post)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    emb = OpenAIEmbedder(api_key="sk-test")
+    assert await emb.embed_batch(["a", "b"]) == [[1.0, 0.0], [0.0, 1.0]]
+    assert seen["url"] == "https://api.openai.com/v1/embeddings"
+    assert seen["payload"] == {"model": "text-embedding-3-small", "input": ["a", "b"]}
+    assert seen["headers"] == {"Authorization": "Bearer sk-test"}
+    assert await emb.embed_batch([]) == []
+
+    # A truncated size is passed through to the API; the key may come from the env.
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
+    await OpenAIEmbedder(dimensions=256).embed("a")
+    assert seen["payload"]["dimensions"] == 256
+    assert seen["headers"] == {"Authorization": "Bearer sk-env"}
+
+    monkeypatch.delenv("OPENAI_API_KEY")
+    with pytest.raises(EmbedderError, match="API key"):
+        await OpenAIEmbedder().embed("a")
+
+
+def test_openai_embedder_rejects_bad_dimensions() -> None:
+    from nomem.embedders.openai import OpenAIEmbedder
+    from nomem.exceptions import EmbedderError
+
+    with pytest.raises(EmbedderError):
+        OpenAIEmbedder(dimensions=99_999)
+    with pytest.raises(EmbedderError, match="truncated"):
+        OpenAIEmbedder(model="text-embedding-ada-002", dimensions=256)
 
 
 def test_resolve_backend_rejects_unknown() -> None:

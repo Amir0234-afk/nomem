@@ -147,7 +147,16 @@ class IngestReceipt:
     edges_cross_referenced: list[str] = field(default_factory=list)
     resolution_confidence: dict[str, float] = field(default_factory=dict)
     ambiguous_resolutions: list[ResolutionOutcome] = field(default_factory=list)
+    #: Extractions held rather than written: below-threshold entities, ambiguous
+    #: ones under ``on_ambiguous="queue"``, and — in ``ingest_mode="manual"`` —
+    #: every intended operation, tagged in each entity's ``metadata`` with the
+    #: **reserved keys** ``intended_op`` and ``resolved_node_id`` (public contract,
+    #: not implementation detail — see ``docs/schema.md`` "Reserved metadata keys").
+    #: Only present under ``ingest_mode="manual"``; absent in ``"auto"``, where the
+    #: real CRUD ran instead of being reported.
     queued_writes: list[ExtractedEntity] = field(default_factory=list)
+    #: Relations discarded because they fell outside ``IngestConfig.edge_types``.
+    relations_dropped: int = 0
 
 
 @dataclass
@@ -159,3 +168,15 @@ class DecayResult:
     nodes_pruned: list[str] = field(default_factory=list)
     prune_candidates: list[str] = field(default_factory=list)
     scores: dict[str, float] = field(default_factory=dict)
+
+
+@dataclass
+class PurgeResult:
+    """Returned by ``BaseBackend.purge_user`` — the one hard-delete path.
+
+    Unreachable from :class:`nomem.MemoryGraph`; see
+    :meth:`nomem.backends.base.BaseBackend.purge_user`.
+    """
+
+    nodes_deleted: int = 0
+    edges_deleted: int = 0

@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..config import DecayConfig
 from ..exceptions import BackendError, EdgeNotFoundError, NodeNotFoundError
-from ..models import DecayResult, Edge, Node, SubGraph, Vector
+from ..models import DecayResult, Edge, Node, PurgeResult, SubGraph, Vector
 from ._common import active_at, bfs_subgraph, iso, now_utc, parse_ts
 from .base import BaseBackend
 
@@ -361,6 +361,37 @@ class Neo4jBackend(BaseBackend):
             )
         return edge
 
+    async def get_edge(self, edge_id: str, as_of: datetime | None = None) -> Edge | None:
+        driver = await self._driver_or_init()
+        async with driver.session(database=self.database) as session:
+            record = await (
+                await session.run(
+                    "MATCH ()-[e:EDGE {id: $id}]->() WHERE e.user_id = $uid "
+                    "RETURN properties(e) AS p",
+                    id=edge_id,
+                    uid=self.user_id,
+                )
+            ).single()
+        if record is None:
+            return None
+        edge = self._props_to_edge(record["p"])
+        if as_of is not None and not active_at(edge, as_of):
+            return None
+        return edge
+
+    async def list_edges(
+        self,
+        *,
+        active_only: bool = True,
+        as_of: datetime | None = None,
+    ) -> list[Edge]:
+        edges = await self._all_edges()
+        if as_of is not None:
+            return [e for e in edges if active_at(e, as_of)]
+        if active_only:
+            return [e for e in edges if e.valid_to is None]
+        return edges
+
     # --- search + traversal ---------------------------------
 
     async def vector_search(self, embedding: Vector, top_k: int) -> list[Node]:
@@ -480,4 +511,33 @@ class Neo4jBackend(BaseBackend):
             nodes_pruned=pruned,
             prune_candidates=prune_candidates,
             scores=scores,
+        )
+
+    # --- the one hard-delete path ---------------------------
+
+    async def purge_user(self, user_id: str) -> PurgeResult:
+        """Hard-delete every row for ``user_id``. See :meth:`BaseBackend.purge_user`."""
+        if user_id != self.user_id:
+            raise BackendError(
+                f"purge_user {user_id!r} does not match backend user {self.user_id!r}"
+            )
+        driver = await self._driver_or_init()
+        async with driver.session(database=self.database) as session:
+            # Delete the user's relationships first so the count is exact even if
+            # an edge ever spans a node this user does not own.
+            edges = await (
+                await session.run(
+                    "MATCH ()-[e:EDGE {user_id: $uid}]->() DELETE e RETURN count(e) AS n",
+                    uid=user_id,
+                )
+            ).single()
+            nodes = await (
+                await session.run(
+                    "MATCH (n:Node {user_id: $uid}) DETACH DELETE n RETURN count(n) AS n",
+                    uid=user_id,
+                )
+            ).single()
+        return PurgeResult(
+            nodes_deleted=int(nodes["n"]) if nodes else 0,
+            edges_deleted=int(edges["n"]) if edges else 0,
         )

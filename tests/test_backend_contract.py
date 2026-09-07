@@ -219,6 +219,138 @@ async def test_retire_edge(backend: BaseBackend) -> None:
         await backend.retire_edge("missing")
 
 
+async def test_get_edge_as_of_temporal_window(backend: BaseBackend) -> None:
+    await backend.create_node(make_node("a"))
+    await backend.create_node(make_node("b"))
+    await backend.upsert_edge(make_edge("e1", "a", "b", at=NOW))
+    assert await backend.get_edge("missing") is None
+
+    got = await backend.get_edge("e1")
+    assert got is not None and got.source_id == "a"
+
+    await backend.retire_edge("e1")
+    assert await backend.get_edge("e1", as_of=NOW + timedelta(minutes=1)) is not None
+    assert await backend.get_edge("e1", as_of=NOW - timedelta(days=365)) is None
+    assert await backend.get_edge("e1", as_of=datetime.now(tz=UTC) + timedelta(days=1)) is None
+
+
+async def test_list_edges_enumerates_including_retired(backend: BaseBackend) -> None:
+    for nid in ("a", "b", "c"):
+        await backend.create_node(make_node(nid))
+    await backend.upsert_edge(make_edge("e1", "a", "b", at=NOW))
+    await backend.upsert_edge(make_edge("e2", "b", "c", at=NOW))
+    await backend.retire_edge("e2")
+
+    assert {e.id for e in await backend.list_edges()} == {"e1"}
+    assert {e.id for e in await backend.list_edges(active_only=False)} == {"e1", "e2"}
+    # as_of takes precedence over active_only, exactly as list_nodes behaves.
+    both = await backend.list_edges(active_only=True, as_of=NOW + timedelta(minutes=1))
+    assert {e.id for e in both} == {"e1", "e2"}
+    assert await backend.list_edges(active_only=False, as_of=NOW - timedelta(days=365)) == []
+
+
+async def test_insert_preserves_supplied_timestamps(backend: BaseBackend) -> None:
+    """The import half of export/import: no now() stamping on insert."""
+    created = NOW - timedelta(days=30)
+    retired_at = NOW - timedelta(days=1)
+
+    node = make_node("n1", at=created)
+    node.valid_to = retired_at  # inserting an already-retired record is legal
+    node.superseded_by = "n2"
+    await backend.create_node(node)
+    await backend.create_node(make_node("n2", at=created))
+
+    got = await backend.get_node("n1")
+    assert got is not None
+    assert got.created_at == created
+    assert got.valid_from == created
+    assert got.valid_to == retired_at
+    assert got.superseded_by == "n2"
+
+    edge = make_edge("e1", "n1", "n2", at=created)
+    edge.valid_to = retired_at
+    await backend.upsert_edge(edge)
+    stored = await backend.get_edge("e1")
+    assert stored is not None
+    assert stored.created_at == created
+    assert stored.valid_from == created
+    assert stored.valid_to == retired_at
+
+
+async def test_export_import_round_trip(backend: BaseBackend) -> None:
+    """Dump every record, wipe the store, reload the dump, answer identically.
+
+    Restoring in place (rather than into a second handle) is what an export
+    actually has to survive, and it is the only shape that means the same thing
+    on a file-per-instance backend and on a shared networked one.
+    """
+    for nid in ("a", "b", "c"):
+        await backend.create_node(make_node(nid, label=f"node-{nid}", at=NOW))
+    await backend.upsert_edge(make_edge("e1", "a", "b", at=NOW))
+    await backend.upsert_edge(make_edge("e2", "b", "c", at=NOW))
+    await backend.retire_node("c", superseded_by="a")
+    await backend.retire_edge("e2")
+
+    nodes = await backend.list_nodes(active_only=False)
+    edges = await backend.list_edges(active_only=False)
+    assert len(nodes) == 3
+    assert len(edges) == 2
+
+    at = NOW + timedelta(minutes=1)
+    before_nodes = {n.id: await backend.get_node(n.id, as_of=at) for n in nodes}
+    before_edges = {e.id: await backend.get_edge(e.id, as_of=at) for e in edges}
+
+    await backend.purge_user("u1")
+    assert await backend.list_nodes(active_only=False) == []
+
+    for node in nodes:
+        await backend.create_node(node)
+    for edge in edges:
+        await backend.upsert_edge(edge)
+
+    for nid, before in before_nodes.items():
+        after = await backend.get_node(nid, as_of=at)
+        assert (before is None) == (after is None)
+        if before is not None and after is not None:
+            assert (before.label, before.valid_from, before.valid_to, before.superseded_by) == (
+                after.label,
+                after.valid_from,
+                after.valid_to,
+                after.superseded_by,
+            )
+    for eid, before_e in before_edges.items():
+        after_e = await backend.get_edge(eid, as_of=at)
+        assert (before_e is None) == (after_e is None)
+        if before_e is not None and after_e is not None:
+            assert (before_e.weight, before_e.valid_from, before_e.valid_to) == (
+                after_e.weight,
+                after_e.valid_from,
+                after_e.valid_to,
+            )
+
+    assert {n.id for n in await backend.list_nodes()} == {"a", "b"}
+    assert {e.id for e in await backend.list_edges()} == {"e1"}
+
+
+async def test_purge_user_deletes_and_is_scoped(backend: BaseBackend) -> None:
+    """The one hard-delete path: real deletion, fenced to the backend's own user."""
+    await backend.create_node(make_node("a"))
+    await backend.create_node(make_node("b"))
+    await backend.upsert_edge(make_edge("e1", "a", "b"))
+    await backend.retire_node("b")
+
+    with pytest.raises(BackendError):
+        await backend.purge_user("someone-else")
+    assert await backend.get_node("a") is not None  # the guard ran before any delete
+
+    result = await backend.purge_user("u1")
+    assert result.nodes_deleted == 2  # retired rows go too
+    assert result.edges_deleted == 1
+    assert await backend.get_node("a") is None
+    assert await backend.list_nodes(active_only=False) == []
+    assert await backend.list_edges(active_only=False) == []
+
+
 async def test_vector_search_orders_by_similarity(backend: BaseBackend) -> None:
     await backend.create_node(make_node("near", vec=[1.0, 0.0, 0.0]))
     await backend.create_node(make_node("mid", vec=[0.7, 0.7, 0.0]))

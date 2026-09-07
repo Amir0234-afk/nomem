@@ -25,13 +25,14 @@ from .config import (
 )
 from .core.decay import DecayEngine
 from .core.extraction import EntityExtractor, EntityResolver
-from .core.graph import GraphCRUD
+from .core.graph import GraphCRUD, plan_receipt
 from .core.retrieval import Retriever
 from .embedders import resolve_embedder
 from .embedders.base import BaseEmbedder
 from .llms import resolve_llm
 from .llms.base import BaseLLM
 from .models import DecayResult, IngestReceipt, SubGraph
+from .plugins import attach_plugins
 from .sync import run_sync
 
 
@@ -54,6 +55,7 @@ class MemoryGraph:
         backend_options: dict[str, Any] | None = None,
         embedder_options: dict[str, Any] | None = None,
         llm_options: dict[str, Any] | None = None,
+        plugins: bool = True,
     ) -> None:
         self.config = config or MemoryGraphConfig(
             user_id=user_id,
@@ -69,7 +71,7 @@ class MemoryGraph:
             embedder_options=embedder_options or {},
             llm_options=llm_options or {},
         )
-        uid = self.config.user_id
+        uid = self.user_id = self.config.user_id
         # `decay=` is the documented knob for the decay mode; keep the nested
         # DecayConfig in sync so per-call overrides start from the right place.
         self.config.decay_config.mode = self.config.decay
@@ -100,6 +102,9 @@ class MemoryGraph:
         self.retriever = Retriever(backend=self.backend, embedder=self.embedder)
         self.decay_engine = DecayEngine(backend=self.backend)
 
+        # Last: a plugin's attach(graph) must see a fully wired graph.
+        self.plugins: dict[str, object] = attach_plugins(self) if plugins else {}
+
     # --- async core --------------------------------------------------
 
     async def aingest(
@@ -113,11 +118,22 @@ class MemoryGraph:
 
         Flow: extract -> resolve -> apply CRUD -> (opt-in) cross-reference.
         ``context`` tags this turn's nodes for hierarchical retrieval routing.
+
+        Under ``ingest_mode="manual"`` this is a **dry run**: it extracts and
+        resolves, writes nothing, and reports every intended operation in
+        ``receipt.queued_writes``.
         """
         cfg = merge(self.config.ingest_config, config)
-        entities, relations = await self.extractor.extract(user, assistant, cfg)
+        entities, relations, dropped = await self.extractor.extract(user, assistant, cfg)
         resolutions = await self.resolver.resolve(entities, cfg)
+
+        if self.config.ingest_mode == "manual":
+            receipt = plan_receipt(resolutions, cfg)
+            receipt.relations_dropped = dropped
+            return receipt
+
         receipt = await self.crud.apply_resolutions(resolutions, relations, cfg, context)
+        receipt.relations_dropped = dropped
 
         if cfg.cross_reference:
             touched = [*receipt.nodes_created, *receipt.nodes_updated]
@@ -145,6 +161,29 @@ class MemoryGraph:
         cfg = merge(self.config.decay_config, config)
         return await self.decay_engine.run(cfg)
 
+    async def astats(self) -> dict[str, Any]:
+        """Counts for this user's graph: totals, active vs retired, nodes per type.
+
+        A cheap health check, not an export — the records themselves stay behind
+        ``retrieve()`` and the backend handle.
+        """
+        nodes = await self.backend.list_nodes(active_only=False)
+        edges = await self.backend.list_edges(active_only=False)
+        active_nodes = [n for n in nodes if n.valid_to is None]
+        by_type: dict[str, int] = {}
+        for node in active_nodes:
+            by_type[node.type] = by_type.get(node.type, 0) + 1
+        return {
+            "user_id": self.user_id,
+            "nodes_total": len(nodes),
+            "nodes_active": len(active_nodes),
+            "nodes_retired": len(nodes) - len(active_nodes),
+            "edges_total": len(edges),
+            "edges_active": sum(1 for e in edges if e.valid_to is None),
+            "edges_retired": sum(1 for e in edges if e.valid_to is not None),
+            "nodes_by_type": dict(sorted(by_type.items())),
+        }
+
     # --- sync wrappers ----------------------------------------------
 
     def ingest(
@@ -170,6 +209,10 @@ class MemoryGraph:
     def run_decay(self, config: dict[str, Any] | None = None) -> DecayResult:
         """Sync wrapper over :meth:`arun_decay`."""
         return run_sync(self.arun_decay(config))
+
+    def stats(self) -> dict[str, Any]:
+        """Sync wrapper over :meth:`astats`."""
+        return run_sync(self.astats())
 
     # --- lifecycle -------------------------------------------------
 

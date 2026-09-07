@@ -18,12 +18,17 @@ class HTTPError(RuntimeError):
     """A non-2xx response or a transport-level failure."""
 
 
-def _post_json_sync(url: str, payload: dict[str, Any], timeout: float) -> dict[str, Any]:
+def _post_json_sync(
+    url: str,
+    payload: dict[str, Any],
+    timeout: float,
+    headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         url,
         data=data,
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", **(headers or {})},
         method="POST",
     )
     try:
@@ -48,6 +53,11 @@ async def post_json(
     payload: dict[str, Any],
     *,
     timeout: float = 60.0,
+    headers: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """POST ``payload`` as JSON to ``url`` and return the decoded JSON response."""
-    return await asyncio.to_thread(_post_json_sync, url, payload, timeout)
+    """POST ``payload`` as JSON to ``url`` and return the decoded JSON response.
+
+    ``headers`` are merged over the default ``Content-Type`` — that is how the
+    OpenAI embedder passes its ``Authorization``.
+    """
+    return await asyncio.to_thread(_post_json_sync, url, payload, timeout, headers)

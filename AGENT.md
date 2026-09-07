@@ -45,7 +45,7 @@ graph = MemoryGraph(
     backend="sqlite",       # sqlite | postgres | neo4j
     embedder="nomic",       # default; swappable via config
     decay="combined",       # "time" | "access" | "combined" | None
-    ingest_mode="auto",     # "auto" | "manual"
+    ingest_mode="auto",     # "auto" | "manual" (manual = dry run, writes nothing)
     # all other options: see Configuration Reference
 )
 
@@ -107,11 +107,17 @@ Ingest receipt returned {
     edges_upserted, edges_cross_referenced,
     resolution_confidence,          # per-node confidence scores
     ambiguous_resolutions,          # nodes where resolution was uncertain
-    queued_writes                   # below-threshold extractions held for review
+    queued_writes,                  # below-threshold extractions held for review
+    relations_dropped               # relations filtered out by edge_types
 }
 ```
 
-`ingest_config` overrides per call: extraction model, edge types to track, importance floor, resolution strategy, resolution confidence threshold, whether to embed immediately or defer, whether to run cross-reference pass.
+`ingest_config` overrides per call: extraction model, edge types to track, importance floor, resolution strategy, resolution confidence threshold, whether to run cross-reference pass.
+
+**`ingest_mode="manual"`** is a dry run: extract and resolve, write nothing, and return an
+`IngestReceipt` with every intended operation in `queued_writes` for the dev to inspect or
+replay. Each queued entity carries its intent in `metadata["intended_op"]`
+(`create` / `update` / `retire` / `queue` / `noop`) and `metadata["resolved_node_id"]`.
 
 ---
 
@@ -181,6 +187,13 @@ The decay pass is a method the developer calls — `graph.run_decay()` / `await 
 
 ```
 nomem/
+├── __init__.py             # public exports — see docs/stability.md
+├── graph.py                # MemoryGraph — the public entry point
+├── plugins.py              # Plugin protocol + "nomem.plugins" entry-point discovery
+├── models.py               # Node, Edge, SubGraph, IngestReceipt, DecayResult, PurgeResult
+├── sync.py                 # sync wrappers over async core
+├── config.py               # configuration dataclasses
+├── exceptions.py
 ├── core/
 │   ├── graph.py            # node/edge CRUD logic
 │   ├── decay.py            # importance scoring + pruning
@@ -188,17 +201,19 @@ nomem/
 │   └── extraction.py       # entity + relation extraction via LLM
 ├── backends/
 │   ├── base.py             # abstract adapter interface
+│   ├── _common.py          # shared bi-temporal filter + BFS (parity across backends)
 │   ├── sqlite.py           # local/dev (zero infra)
 │   ├── postgres.py         # production (pgvector)
 │   └── neo4j.py            # power users
 ├── embedders/
 │   ├── base.py             # abstract embedder interface
-│   ├── nomic.py            # default (Ollama, nomic-embed-text)
-│   ├── openai.py
+│   ├── nomic.py            # default (Ollama, nomic-embed-text, 768d)
+│   ├── openai.py           # plain HTTP — no extra, no dependency
 │   └── custom.py           # dev passes any callable
-├── sync.py                 # sync wrappers over async core
-├── config.py               # configuration dataclasses
-└── exceptions.py
+└── llms/
+    ├── base.py             # BaseLLM — generate_json() for extraction
+    ├── ollama.py           # default extraction adapter
+    └── custom.py           # dev passes any callable
 ```
 
 ---
@@ -213,15 +228,43 @@ class BaseBackend(ABC):
     async def update_node(self, node_id: str, updates: dict) -> Node: ...
     async def retire_node(self, node_id: str, superseded_by: str | None = None) -> Node: ...
     async def get_node(self, node_id: str, as_of: datetime | None = None) -> Node | None: ...
+    async def list_nodes(self, *, active_only: bool = True, context: list[str] | None = None,
+                         as_of: datetime | None = None) -> list[Node]: ...
     async def upsert_edge(self, edge: Edge) -> Edge: ...
     async def retire_edge(self, edge_id: str, superseded_by: str | None = None) -> Edge: ...
+    async def get_edge(self, edge_id: str, as_of: datetime | None = None) -> Edge | None: ...
+    async def list_edges(self, *, active_only: bool = True,
+                         as_of: datetime | None = None) -> list[Edge]: ...
     async def vector_search(self, embedding: list[float], top_k: int) -> list[Node]: ...
     async def traverse(self, seed_ids: list[str], hops: int, as_of: datetime | None = None) -> SubGraph: ...
     async def cross_reference(self, node: Node, threshold: float) -> list[tuple[Node, float]]: ...
     async def run_decay(self, config: DecayConfig) -> DecayResult: ...
+
+    # Not abstract. Default body raises NotSupportedError. See below.
+    async def purge_user(self, user_id: str) -> PurgeResult: ...
 ```
 
 Any backend that implements this interface works. Devs can write their own.
+
+**This shape is frozen at `0.1.0`.** The paid tier is a separate package that depends on
+the published core and extends it; adding an abstract method here later breaks every
+third-party backend and every plugin. `list_nodes`, `list_edges`, and `get_edge` exist
+because enumeration — not seed-based traversal — is what graph export needs to round-trip
+retired records.
+
+### `purge_user` — the one hard-delete path
+
+`purge_user` really deletes every row for one user. It exists so GDPR right-to-forget can
+be built as a plugin instead of a fork. It is:
+
+- **not abstract** — the default body raises `NotSupportedError`, so a custom backend
+  need not implement it;
+- implemented by the three bundled backends;
+- **unreachable from `MemoryGraph` and `GraphCRUD`** — nothing in the public graph API
+  calls it, and a guard test asserts it never appears there.
+
+That keeps the rule below true as written: hard deletes are not exposed in the public
+API. A backend handle is not the public API.
 
 ---
 
@@ -235,7 +278,8 @@ class BaseEmbedder(ABC):
     def dimensions(self) -> int: ...
 ```
 
-Default: `nomic-embed-text` via Ollama (384 dimensions, free, local). Swappable via `embedder=` param or by passing any object implementing `BaseEmbedder`.
+Default: `nomic-embed-text` via Ollama (768 dimensions, free, local; smaller sizes via
+Matryoshka truncation). Swappable via `embedder=` param or by passing any object implementing `BaseEmbedder`.
 
 ---
 
@@ -301,6 +345,39 @@ class SubGraph:
 | Hosted managed backend (nomem Cloud) | | ✓ |
 | Team namespacing + multi-tenant isolation | | ✓ |
 
+**The paid tier is a plugin package, not a fork.** It is a separate private distribution
+that depends on the published `nomem` from PyPI and extends it through the public
+surface: the adapter registries and the `nomem.plugins` entry point. It contains no copy
+of this source, so core updates reach paid users as an ordinary dependency bump and there
+is never a merge from public to private.
+
+Consequence: anything a paid feature needs must be **public and stable** before `0.1.0`
+ships. That is why `BaseBackend` grew `list_edges` / `get_edge` / `purge_user` and why
+`docs/stability.md` exists.
+
+**Graph export / import ships first.** It is the only paid feature that is a pure
+extension — no auth surface, no tenant column, no hosted infrastructure, no core change.
+
+Selling and delivering the paid tier is a separate repository
+(`no0nestudio-website`); nothing about it belongs in this one.
+
+---
+
+## Decisions already made — do not re-open
+
+| Decision | Where |
+|---|---|
+| Core stays **MIT**; copyleft considered and rejected | this file |
+| Paid tier is a **plugin package**, never a fork | Open Core Split, above |
+| `BaseBackend` is **14 methods, frozen at 0.1.0** | Backend Adapter Interface, above |
+| GDPR hard-delete lives in **public `BaseBackend.purge_user`**, unreachable from `MemoryGraph` | Backend Adapter Interface, above |
+| Plugins attach via the **`nomem.plugins` entry point**, mounted at `graph.<namespace>` | `docs/stability.md` |
+| First paid feature: **graph export / import** | Open Core Split, above |
+| `ingest_mode="manual"` is a **dry run** | Ingest Pipeline, above |
+| `embed_immediately` **removed**; `edge_types` and `resolution_strategy` **wired** | `docs/ROADMAP.md` |
+| `OpenAIEmbedder` implemented over plain HTTP; the **`openai` extra is dropped** | `docs/ROADMAP.md` |
+| nomic embedder is **768-dim** (the 384 in earlier drafts was wrong) | Embedder Interface, above |
+
 ---
 
 ## Development Phases
@@ -311,8 +388,8 @@ class SubGraph:
 | 1 | SQLite backend + nomic embedder + `ingest()` + `retrieve()` working end-to-end; bi-temporal node/edge schema; entity resolution (embedding + string match); write-boundary cross-reference hook |
 | 2 | PostgreSQL backend + decay pass (`run_decay()`) + hierarchical sub-index retrieval |
 | 3 | Neo4j backend + sync wrappers + full async/sync parity |
-| 4 | PyPI publish + docs site + quickstart (zero-infra SQLite demo) |
-| 5 | Paid features + nomem Cloud managed API |
+| 4 | Freeze the extension surface, publish `0.1.0` to PyPI, quickstart (zero-infra SQLite demo) — see [`phases/PHASE_4.md`](phases/PHASE_4.md) |
+| 5 | Paid features (graph export / import first) + nomem Cloud managed API — built as a plugin package in a separate repo |
 
 ---
 
@@ -323,7 +400,7 @@ class SubGraph:
 - Never silently discard ingest failures — surface exceptions
 - Never exceed the retrieval token budget without explicit dev override
 - Never make assumptions about what "important" means — use the importance score, let the dev tune it
-- Never hard-delete nodes or edges — always retire via `valid_to`; hard deletes are not exposed in the public API
+- Never hard-delete nodes or edges — always retire via `valid_to`; hard deletes are not exposed in the public API. `BaseBackend.purge_user` is the single, deliberately gated exception and must never become reachable from `MemoryGraph`
 - Never silently merge entities on low-confidence resolution — surface ambiguous resolutions in the ingest receipt
 
 ---

@@ -14,6 +14,7 @@ The public ``MemoryGraph`` class lives in ``nomem/graph.py`` and delegates here.
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -41,6 +42,45 @@ def _now() -> datetime:
 
 def _new_id() -> str:
     return str(uuid.uuid4())
+
+
+def plan_receipt(
+    resolutions: list[ResolutionOutcome], config: IngestConfig
+) -> IngestReceipt:
+    """Classify resolutions into intended operations without touching the backend.
+
+    Backs ``ingest_mode="manual"`` (a dry run). Every entity lands in
+    ``queued_writes`` carrying its intent in ``metadata["intended_op"]`` —
+    ``create`` / ``update`` / ``retire`` / ``queue`` / ``noop`` — plus
+    ``resolved_node_id`` where one was matched. The entities are copies, so the
+    caller's extraction results are never mutated.
+    """
+    receipt = IngestReceipt()
+    for outcome in resolutions:
+        entity = outcome.extracted
+        if outcome.resolved_node_id is not None:
+            receipt.resolution_confidence[outcome.resolved_node_id] = outcome.confidence
+            op = "retire" if entity.negated else "update"
+        elif outcome.ambiguous:
+            receipt.ambiguous_resolutions.append(outcome)
+            op = "create" if config.on_ambiguous == "create" and not entity.negated else "queue"
+        elif entity.negated:
+            op = "noop"  # nothing on record to retire
+        elif config.importance_floor > INITIAL_IMPORTANCE:
+            op = "queue"
+        else:
+            op = "create"
+        receipt.queued_writes.append(
+            replace(
+                entity,
+                metadata={
+                    **entity.metadata,
+                    "intended_op": op,
+                    "resolved_node_id": outcome.resolved_node_id,
+                },
+            )
+        )
+    return receipt
 
 
 class GraphCRUD:
@@ -235,4 +275,4 @@ class GraphCRUD:
         )
 
 
-__all__ = ["CROSS_REF_RELATION", "INITIAL_IMPORTANCE", "GraphCRUD"]
+__all__ = ["CROSS_REF_RELATION", "INITIAL_IMPORTANCE", "GraphCRUD", "plan_receipt"]

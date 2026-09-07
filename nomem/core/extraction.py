@@ -85,8 +85,13 @@ class EntityExtractor:
         user: str,
         assistant: str,
         config: IngestConfig,
-    ) -> tuple[list[ExtractedEntity], list[ExtractedRelation]]:
-        """Return ``(entities, relations)`` extracted from one conversation turn."""
+    ) -> tuple[list[ExtractedEntity], list[ExtractedRelation], int]:
+        """Return ``(entities, relations, relations_dropped)`` for one turn.
+
+        ``relations_dropped`` counts relations discarded by
+        ``config.edge_types``; it is reported on the ingest receipt so a
+        narrowed edge vocabulary is visible rather than silent.
+        """
         prompt = f"USER: {user}\nASSISTANT: {assistant}"
         data = await self.llm.generate_json(
             prompt,
@@ -98,7 +103,11 @@ class EntityExtractor:
         entities = self._parse_entities(data.get("entities", []))
         known = {e.label for e in entities}
         relations = self._parse_relations(data.get("relations", []), known)
-        return entities, relations
+        if config.edge_types is None:
+            return entities, relations, 0
+        allowed = set(config.edge_types)
+        kept = [r for r in relations if r.relation in allowed]
+        return entities, kept, len(relations) - len(kept)
 
     def _parse_entities(self, raw: Any) -> list[ExtractedEntity]:
         if not isinstance(raw, list):
@@ -150,9 +159,13 @@ class EntityExtractor:
 
 
 class EntityResolver:
-    """Matches extracted entities against existing nodes for the user."""
+    """Matches extracted entities against existing nodes for the user.
 
-    # Combined score = max(embedding cosine, string-similarity ratio).
+    ``IngestConfig.resolution_strategy`` picks the score: ``"embedding"``
+    (cosine only), ``"string"`` (surface-form ratio only), or ``"hybrid"``
+    (the max of the two — the default).
+    """
+
     def __init__(self, *, backend: BaseBackend, embedder: BaseEmbedder) -> None:
         self.backend = backend
         self.embedder = embedder
@@ -184,14 +197,21 @@ class EntityResolver:
         best_score = 0.0
         best_source = "embedding"
         ranked: list[tuple[str, float]] = []
+        strategy = config.resolution_strategy
         for node in candidates:
-            emb_score = cosine(vector, node.embedding) if node.embedding else 0.0
-            str_score = difflib.SequenceMatcher(
-                None, entity.label.lower(), node.label.lower()
-            ).ratio()
-            # Trust the surface-form match only when it is near-identical; otherwise
-            # a few coincidental shared letters would flag every new entity.
-            str_eff = str_score if str_score >= config.string_match_min else 0.0
+            emb_score = (
+                cosine(vector, node.embedding)
+                if node.embedding and strategy != "string"
+                else 0.0
+            )
+            str_eff = 0.0
+            if strategy != "embedding":
+                str_score = difflib.SequenceMatcher(
+                    None, entity.label.lower(), node.label.lower()
+                ).ratio()
+                # Trust the surface-form match only when it is near-identical; otherwise
+                # a few coincidental shared letters would flag every new entity.
+                str_eff = str_score if str_score >= config.string_match_min else 0.0
             score = max(emb_score, str_eff)
             ranked.append((node.id, score))
             if score > best_score:

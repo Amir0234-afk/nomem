@@ -27,7 +27,6 @@ dependencies = []
 [project.optional-dependencies]
 postgres = ["asyncpg>=0.29", "pgvector>=0.3"]
 neo4j = ["neo4j>=5.20"]
-openai = ["openai>=1.30"]
 
 [project.urls]
 Homepage = "https://github.com/no-ones-studio/nomem"

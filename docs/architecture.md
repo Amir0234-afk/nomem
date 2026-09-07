@@ -6,6 +6,7 @@
 nomem/
 ├── __init__.py        # public exports: MemoryGraph, models, config, exceptions
 ├── graph.py           # MemoryGraph — the public entry point (async core + sync wrappers)
+├── plugins.py         # Plugin protocol + "nomem.plugins" entry-point discovery
 ├── sync.py            # run_sync() on one dedicated background loop (networked backends stay valid)
 ├── config.py          # MemoryGraphConfig / DecayConfig / IngestConfig / RetrievalConfig + merge()
 ├── models.py          # Node, Edge, SubGraph, IngestReceipt, DecayResult, pipeline intermediates
@@ -26,8 +27,8 @@ nomem/
 │   └── __init__.py    # BACKEND_REGISTRY + resolve_backend()
 ├── embedders/
 │   ├── base.py        # BaseEmbedder ABC
-│   ├── nomic.py       # Phase 1 default · nomic-embed-text via Ollama (768d native)
-│   ├── openai.py      # requires [openai] extra
+│   ├── nomic.py       # default · nomic-embed-text via Ollama (768d native)
+│   ├── openai.py      # plain HTTP via _http.py — no extra, no dependency
 │   ├── custom.py      # CallableEmbedder — wrap any callable (implemented)
 │   └── __init__.py    # EMBEDDER_REGISTRY + resolve_embedder()
 └── llms/
@@ -39,15 +40,14 @@ nomem/
 
 `MemoryGraph.__init__` resolves the embedder first, then the backend + LLM through the
 registries (injecting `user_id` and the embedder's `vector_dimensions` into the backend),
-syncs `DecayConfig.mode` from the `decay=` knob, and constructs one instance each of
-`EntityExtractor`, `EntityResolver`, `GraphCRUD`, `Retriever`, and `DecayEngine`, sharing
-the resolved adapters.
+syncs `DecayConfig.mode` from the `decay=` knob, constructs one instance each of
+`EntityExtractor`, `EntityResolver`, `GraphCRUD`, `Retriever`, and `DecayEngine` sharing
+the resolved adapters, and finally loads plugins (see below) unless `plugins=False`.
 
 ### Dimensions note
 
-AGENT.md states the nomic embedder is 384-dim; `nomic-embed-text` actually produces
-**768**-dim vectors, which is the default. A smaller `dimensions=` is honored via
-Matryoshka truncation + renormalization.
+`nomic-embed-text` produces **768**-dim vectors, which is the default. A smaller
+`dimensions=` is honored via Matryoshka truncation + renormalization.
 
 ## Ingest pipeline
 
@@ -81,6 +81,13 @@ IngestReceipt {
 ```
 
 Per-call overrides come from the `config=` dict, merged over `ingest_config`.
+
+`ingest_mode="manual"` short-circuits after resolution: nothing is written, and every
+intended operation comes back in `receipt.queued_writes`. `ingest_config.edge_types`, when
+set, drops extracted relations outside the allowed set before the edge upsert step.
+`ingest_config.resolution_strategy` selects the scoring function —
+`"embedding"` (cosine only), `"string"` (near-exact ratio only), or `"hybrid"`
+(the `max()` of both, the default).
 
 ## Retrieval pipeline
 
@@ -149,3 +156,29 @@ call. asyncpg pools and the Neo4j driver bind their connections to the loop that
 them, so a per-call loop would break the second sync call; the shared loop keeps them
 valid for the life of the process. Calling a sync method from inside a running event loop
 raises `NomemError` — use the async variant there.
+
+## Plugins
+
+Adapters swap a component; plugins add capability. `nomem/plugins.py` defines a `Plugin`
+protocol (`namespace: str`, `attach(graph) -> object`) and discovers implementations
+through the `nomem.plugins` entry-point group at `MemoryGraph.__init__` time. Each
+returned object is mounted at `graph.<namespace>` and recorded in `graph.plugins`.
+
+```
+MemoryGraph.__init__
+        │
+        ├─ resolve embedder → backend → llm  (registries)
+        ├─ build pipelines                    (extractor, resolver, crud, retriever, decay)
+        └─ plugins is True?
+               entry_points(group="nomem.plugins")
+                    → Plugin()  → attach(graph) → setattr(graph, namespace, obj)
+                    → collision with an existing attribute → ConfigError
+                    → import failure → raised, never swallowed
+```
+
+`MemoryGraph(plugins=False)` skips discovery. Plugins never monkeypatch core methods; they
+read the graph through its public attributes (`backend`, `embedder`, `llm`, `config`,
+`user_id`) documented in [stability.md](stability.md).
+
+This is the boundary the proprietary tier extends through, which is why it is a separate
+package rather than a fork.

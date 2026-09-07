@@ -14,16 +14,23 @@ conversation — not an append-only log.
 nomem is **not** a vector database, an LLM wrapper, or a chat-history store. It is a graph
 database with an LLM-powered CRUD interface. The developer controls the rules.
 
-## Status: Phase 3 complete
+## Status: extension surface frozen, release pending
 
 Working end-to-end: Ollama-based extraction, entity resolution (embedding + near-exact
-string match), the bi-temporal node/edge schema, `as_of` historical retrieval, the
-opt-in cross-reference pass, the **decay pass** (`run_decay()` — scoring + optional
-pruning), and **hierarchical retrieval** (core index + context-tag-routed situation
-sub-indexes) — on **all three backends** (SQLite, PostgreSQL/pgvector, Neo4j), which
-pass one identical behavioral contract suite. The **sync API** is a thin wrapper over
-the async core and stays valid across calls with networked backends. Phase 4 is
-packaging + docs. See [AGENT.md](AGENT.md) for the roadmap.
+string match, strategy-selectable), the bi-temporal node/edge schema, `as_of` historical
+retrieval, the opt-in cross-reference pass, `ingest_mode="manual"` dry runs, the **decay
+pass** (`run_decay()` — scoring + optional pruning), and **hierarchical retrieval** (core
+index + context-tag-routed situation sub-indexes) — on **all three backends** (SQLite,
+PostgreSQL/pgvector, Neo4j), which pass one identical behavioral contract suite. The
+**sync API** is a thin wrapper over the async core and stays valid across calls with
+networked backends.
+
+Phase 4 Parts A and B are done: `BaseBackend` has its final **14-method** shape, graph
+dumps round-trip (retired records included), `nomem.plugins` mounts third-party
+capability at `graph.<namespace>`, and no config field is inert. What remains is Part C —
+version `0.1.0`, quickstarts, CI, and the PyPI upload
+([`phases/PHASE_4.md`](phases/PHASE_4.md)). **Until then this is unreleased**: the package
+is not on PyPI.
 
 ### Backends other than SQLite
 
@@ -46,14 +53,20 @@ Each keeps its vector store at one fixed dimension — use a dedicated database 
 embedding model. Close networked backends with `graph.close()` / `await graph.aclose()`,
 or use `with` / `async with`.
 
+**SQLite is the dev backend.** Its vector search loads every active node and computes
+cosine in Python — fine for local work and small single-user graphs, degrading past
+~10⁴ nodes. Point production at Postgres or Neo4j, which use native vector indexes.
+
 ## Install
 
 ```bash
 uv add nomem             # core: zero mandatory dependencies
 uv add "nomem[postgres]" # + asyncpg / pgvector
 uv add "nomem[neo4j]"    # + neo4j driver
-uv add "nomem[openai]"   # OpenAI embedder
 ```
+
+The nomic and OpenAI embedders both work with no extra — they talk plain HTTP over the
+stdlib.
 
 Local dev needs nothing beyond Python 3.11+ and a running
 [Ollama](https://ollama.com):
@@ -78,7 +91,7 @@ graph = MemoryGraph(
     embedder="nomic",      # nomic | openai | any BaseEmbedder / callable
     llm="ollama",          # ollama | any BaseLLM / callable (extraction)
     decay="combined",      # "time" | "access" | "combined" | None
-    ingest_mode="auto",
+    ingest_mode="auto",    # "manual" = dry run: resolve, write nothing
 )
 
 graph.ingest(
@@ -96,6 +109,7 @@ result = graph.retrieve(                                # hierarchical
 )
 
 graph.run_decay()   # rescore importance; prune if decay_config.pruning is on
+graph.stats()       # {"nodes_active": 12, "nodes_retired": 3, "nodes_by_type": {...}, ...}
 
 # async variants — identical signatures
 await graph.aingest(...)
@@ -105,22 +119,44 @@ await graph.arun_decay()
 
 The sync API is a thin wrapper over the async core.
 
+## Extending it
+
+Three sanctioned boundaries, all public and all documented in
+[docs/stability.md](docs/stability.md):
+
+- **Adapters** — implement `BaseBackend`, `BaseEmbedder`, or `BaseLLM` and register a
+  name (or pass an instance). Swaps a component.
+- **Plugins** — advertise a `nomem.plugins` entry point; `MemoryGraph` mounts what your
+  `attach(graph)` returns at `graph.<namespace>`. Adds capability.
+- **Config** — every threshold, mode, and model name is a dataclass field, overridable
+  per call.
+
+If something can't be built through those three, that's a gap in the surface, and the fix
+belongs here in the open core.
+
 ## Docs
 
 Start at [docs/README.md](docs/README.md) for the index.
 
 | Doc | What |
 |---|---|
-| [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) | Where the project stands — phases, what works, what's stubbed, deviations from AGENT.md |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | Phase 4 / 5 tasks, known limitations, open design questions |
-| [docs/TESTING.md](docs/TESTING.md) | The 140-test suite, file by file, and how to run it |
-| [docs/architecture.md](docs/architecture.md) | Module map + ingest / retrieval / decay pipelines + the sync model |
+| [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) | Where the project stands — phases, what works, what's stubbed, gaps against AGENT.md |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Phase 4 / 5 plan, known limitations, which design questions are decided and which are open |
+| [docs/stability.md](docs/stability.md) | The public API and what `nomem>=0.1,<0.2` guarantees |
+| [docs/TESTING.md](docs/TESTING.md) | The 178-test suite, file by file, plus what 0.1.0 still needs |
+| [docs/architecture.md](docs/architecture.md) | Module map + ingest / retrieval / decay pipelines + the sync and plugin models |
 | [docs/schema.md](docs/schema.md) | Canonical `Node` / `Edge` / `SubGraph` schema + bi-temporal semantics |
-| [docs/adapters.md](docs/adapters.md) | Writing your own backend, embedder, or LLM |
+| [docs/adapters.md](docs/adapters.md) | Writing your own backend, embedder, LLM, or plugin |
+| [phases/PHASE_4.md](phases/PHASE_4.md) | The release spec |
 
 ## Open-core split
 
 The MIT core covers graph CRUD, the SQLite / PostgreSQL / Neo4j backends, the default
 embedder, decay + pruning, and `ingest()` / `retrieve()`. Graph export/import, cross-user
 queries, retrieval analytics, GDPR tooling, the hosted backend, and team namespacing are
-proprietary. See [AGENT.md](AGENT.md).
+proprietary.
+
+The paid tier is a **separate package** that depends on this one from PyPI and extends it
+through the public registries and the `nomem.plugins` entry point. It is not a fork and
+contains no copy of this source, so core updates reach it as an ordinary dependency bump.
+Everything it needs is public here. See [AGENT.md](AGENT.md).

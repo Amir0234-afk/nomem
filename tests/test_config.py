@@ -27,8 +27,10 @@ def test_decay_defaults_match_agent_md() -> None:
 def test_ingest_defaults() -> None:
     i = IngestConfig()
     assert i.cross_reference is False  # AGENT.md: opt-in
-    assert i.embed_immediately is True
+    assert i.resolution_strategy == "hybrid"  # = max(embedding, string), ROADMAP Q5
+    assert i.edge_types is None  # track any relation the extractor emits
     assert 0.0 <= i.resolution_confidence_threshold <= 1.0
+    assert not hasattr(i, "embed_immediately")  # removed at 0.1.0 — ROADMAP Q5
 
 
 def test_retrieval_defaults() -> None:
@@ -57,6 +59,8 @@ def test_out_of_range_raises() -> None:
         RetrievalConfig(top_k=0)
     with pytest.raises(ConfigError):
         IngestConfig(resolution_confidence_threshold=1.5)
+    with pytest.raises(ConfigError):
+        IngestConfig(resolution_strategy="vibes")
 
 
 def test_merge_applies_overrides() -> None:

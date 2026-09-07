@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..config import DecayConfig
 from ..exceptions import BackendError, EdgeNotFoundError, NodeNotFoundError
-from ..models import DecayResult, Edge, Node, SubGraph, Vector
+from ..models import DecayResult, Edge, Node, PurgeResult, SubGraph, Vector
 from ._common import active_at, bfs_subgraph, now_utc
 from .base import BaseBackend
 
@@ -398,6 +398,33 @@ class PostgresBackend(BaseBackend):
             )
         return edge
 
+    async def get_edge(self, edge_id: str, as_of: datetime | None = None) -> Edge | None:
+        pool = await self._pool_or_init()
+        row = await pool.fetchrow(
+            "SELECT * FROM edges WHERE id = $1 AND user_id = $2", edge_id, self.user_id
+        )
+        if row is None:
+            return None
+        edge = self._row_to_edge(row)
+        if as_of is not None and not active_at(edge, as_of):
+            return None
+        return edge
+
+    async def list_edges(
+        self,
+        *,
+        active_only: bool = True,
+        as_of: datetime | None = None,
+    ) -> list[Edge]:
+        pool = await self._pool_or_init()
+        rows = await pool.fetch("SELECT * FROM edges WHERE user_id = $1", self.user_id)
+        edges = [self._row_to_edge(r) for r in rows]
+        if as_of is not None:
+            return [e for e in edges if active_at(e, as_of)]
+        if active_only:
+            return [e for e in edges if e.valid_to is None]
+        return edges
+
     # --- search + traversal -------------------------------------
 
     async def vector_search(self, embedding: Vector, top_k: int) -> list[Node]:
@@ -503,3 +530,17 @@ class PostgresBackend(BaseBackend):
             prune_candidates=prune_candidates,
             scores=scores,
         )
+
+    # --- the one hard-delete path -------------------------------
+
+    async def purge_user(self, user_id: str) -> PurgeResult:
+        """Hard-delete every row for ``user_id``. See :meth:`BaseBackend.purge_user`."""
+        if user_id != self.user_id:
+            raise BackendError(
+                f"purge_user {user_id!r} does not match backend user {self.user_id!r}"
+            )
+        pool = await self._pool_or_init()
+        async with pool.acquire() as conn, conn.transaction():
+            edges = await conn.fetch("DELETE FROM edges WHERE user_id = $1 RETURNING id", user_id)
+            nodes = await conn.fetch("DELETE FROM nodes WHERE user_id = $1 RETURNING id", user_id)
+        return PurgeResult(nodes_deleted=len(nodes), edges_deleted=len(edges))
