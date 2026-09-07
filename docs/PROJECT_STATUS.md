@@ -273,7 +273,7 @@ docker-compose.yml         dedicated nomem-postgres (:5433) + nomem-neo4j (:7688
 | Package manager | `uv` (0.11.x) |
 | Build backend | `hatchling` |
 | Core runtime deps | **none** |
-| Optional extras | `postgres` (`asyncpg>=0.29`, `pgvector>=0.3`), `neo4j` (`neo4j>=5.20`). The `openai` extra is **gone** — that embedder is plain HTTP over `_http.py` |
+| Optional extras | `postgres` (`asyncpg>=0.29`, `pgvector>=0.3`), `neo4j` (`neo4j>=5.20,<7` — the cap admits the 6.x the suite actually runs against and stops 7.x arriving unannounced). The `openai` extra is **gone** — that embedder is plain HTTP over `_http.py` |
 | Dev deps | `pytest>=8.2`, `pytest-asyncio>=0.23`, `ruff>=0.5`, `mypy>=1.10` |
 | Lint | `ruff` — E, F, I, UP, B, SIM, RUF; line length 100 |
 | Types | `mypy --strict` + `warn_unreachable`; `asyncpg.*`/`pgvector.*`/`neo4j.*` set `ignore_missing_imports` |

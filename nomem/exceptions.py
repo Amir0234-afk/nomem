@@ -60,11 +60,3 @@ class AmbiguousResolutionError(ResolutionError):
 
 class RetrievalBudgetExceededError(NomemError):
     """A retrieval would exceed the configured token budget without an override."""
-
-
-class HardDeleteNotSupportedError(NomemError):
-    """Something attempted a hard delete.
-
-    nomem is bi-temporal: nodes and edges are retired by setting ``valid_to``,
-    never removed. No hard-delete path is exposed in the public API.
-    """

@@ -4,33 +4,41 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nomem"
-version = "0.0.0"
+version = "0.1.0"
 description = "No One's Memory Management — persistent, self-updating knowledge-graph memory for LLM apps"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "No One's Studio" }]
-keywords = ["llm", "memory", "knowledge-graph", "rag", "agents"]
+maintainers = [{ name = "No One's Studio" }]
+keywords = ["llm", "memory", "knowledge-graph", "graphrag", "rag", "agents", "bitemporal"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Topic :: Database",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
 ]
 # Core has NO mandatory runtime dependencies. SQLite ships with CPython; the
-# default nomic embedder talks to a local Ollama over HTTP using the stdlib.
+# default nomic embedder and the OpenAI embedder talk HTTP using the stdlib.
 dependencies = []
 
 [project.optional-dependencies]
 postgres = ["asyncpg>=0.29", "pgvector>=0.3"]
-neo4j = ["neo4j>=5.20"]
+neo4j = ["neo4j>=5.20,<7"]
 
 [project.urls]
-Homepage = "https://github.com/no-ones-studio/nomem"
-Documentation = "https://github.com/no-ones-studio/nomem/tree/main/docs"
+Homepage = "https://github.com/Amir0234-afk/nomem"
+Source = "https://github.com/Amir0234-afk/nomem"
+Documentation = "https://github.com/Amir0234-afk/nomem/tree/master/docs"
+Changelog = "https://github.com/Amir0234-afk/nomem/blob/master/CHANGELOG.md"
+Issues = "https://github.com/Amir0234-afk/nomem/issues"
 
 [dependency-groups]
 dev = [
@@ -42,6 +50,21 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["nomem"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/nomem",
+    "/tests",
+    "/docs",
+    "/phases",
+    "/examples",
+    "/AGENT.md",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/CONTRIBUTING.md",
+    "/LICENSE",
+    "/docker-compose.yml",
+]
 
 [tool.ruff]
 target-version = "py311"
@@ -63,6 +86,7 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 markers = [
     "live: end-to-end tests that require a local Ollama (deselect with -m 'not live')",

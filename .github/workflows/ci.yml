@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Zero external services. Also proves the core really has no mandatory
+  # runtime dependencies: this job never installs an extra.
+  hermetic:
+    name: hermetic (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Sync (no extras — core must stand alone)
+        run: uv sync --python ${{ matrix.python-version }}
+
+      - name: Ruff
+        run: uv run ruff check .
+
+      - name: Mypy
+        run: uv run mypy nomem
+
+      - name: Pytest (hermetic)
+        run: uv run pytest -q -m "not live and not postgres and not neo4j"
+
+  # Real Postgres + Neo4j. Runs the backend contract suite for all three
+  # backends against actual databases. Ollama-backed `live` tests stay manual.
+  services:
+    name: backends (postgres + neo4j)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: nomem
+          POSTGRES_PASSWORD: nomem
+          POSTGRES_DB: nomem
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nomem"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+      neo4j:
+        image: neo4j:5.26
+        env:
+          NEO4J_AUTH: neo4j/nomemtest123
+        ports:
+          - 7687:7687
+          - 7474:7474
+        options: >-
+          --health-cmd "wget -q -O /dev/null http://localhost:7474 || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Sync with all extras
+        run: uv sync --all-extras
+
+      - name: Pytest (all backends, no Ollama)
+        env:
+          NOMEM_TEST_POSTGRES_DSN: postgresql://nomem:nomem@localhost:5432/nomem
+          NOMEM_TEST_NEO4J_URI: bolt://localhost:7687
+          NOMEM_TEST_NEO4J_AUTH: neo4j:nomemtest123
+        run: uv run pytest -q -m "not live"
+
+  # Catches packaging mistakes that only appear in a built artifact:
+  # a missing py.typed, an unshipped subpackage, a broken README render.
+  build:
+    name: build + install from wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Build sdist + wheel
+        run: uv build
+
+      - name: Twine check
+        run: uv run --with twine --no-project twine check dist/*
+
+      - name: Install the wheel into a clean venv and run the quickstart
+        run: |
+          uv venv /tmp/clean
+          VIRTUAL_ENV=/tmp/clean uv pip install dist/*.whl
+          /tmp/clean/bin/python examples/quickstart.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/

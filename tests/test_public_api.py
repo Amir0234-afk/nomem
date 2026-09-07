@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import importlib.metadata
 import inspect
 import re
 from collections.abc import Callable
@@ -20,7 +21,8 @@ _ENUMERATED_ROWS = ("nomem.models", "nomem.config", "nomem.exceptions")
 
 
 def test_version() -> None:
-    assert nomem.__version__ == "0.0.0"
+    """`__version__` is read from installed metadata, not hardcoded."""
+    assert nomem.__version__ == importlib.metadata.version("nomem")
 
 
 def test_all_is_sorted_and_importable() -> None:

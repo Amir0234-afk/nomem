@@ -9,13 +9,22 @@ bi-temporal knowledge graph with an explicit LLM-powered CRUD interface.
     graph.ingest(user="...", assistant="...")
     result = graph.retrieve("Kira")
 
-Status: Phase 3 complete — all three backends (SQLite, PostgreSQL/pgvector,
-Neo4j), nomic embedder, Ollama extraction, decay, hierarchical retrieval, and a
-full sync API (thin wrapper over the async core, safe with networked backends).
-Phase 4 is packaging + docs.
+Storage, embedding, and extraction are adapter boundaries: SQLite (zero infra),
+PostgreSQL/pgvector, and Neo4j all pass one identical behavioral contract suite,
+the nomic (Ollama) and OpenAI embedders both talk plain HTTP with no extra
+dependency, and any piece can be replaced with your own class or a bare callable.
+Every method has an ``a``-prefixed async twin; the sync API is a thin wrapper over
+the async core.
+
+Capability is extended through the ``nomem.plugins`` entry point rather than by
+subclassing or forking — see ``docs/stability.md`` for what ``>=0.1,<0.2``
+guarantees.
 """
 
 from __future__ import annotations
+
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 
 from .config import DecayConfig, IngestConfig, MemoryGraphConfig, RetrievalConfig
 from .exceptions import (
@@ -25,7 +34,6 @@ from .exceptions import (
     EdgeNotFoundError,
     EmbedderError,
     ExtractionError,
-    HardDeleteNotSupportedError,
     NodeNotFoundError,
     NomemError,
     NotSupportedError,
@@ -46,7 +54,10 @@ from .models import (
 )
 from .plugins import Plugin
 
-__version__ = "0.0.0"
+try:
+    __version__ = _pkg_version("nomem")
+except PackageNotFoundError:  # running from a source tree that was never installed
+    __version__ = "0.0.0+unknown"
 
 __all__ = [
     "AmbiguousResolutionError",
@@ -60,7 +71,6 @@ __all__ = [
     "ExtractedEntity",
     "ExtractedRelation",
     "ExtractionError",
-    "HardDeleteNotSupportedError",
     "IngestConfig",
     "IngestReceipt",
     "MemoryGraph",
