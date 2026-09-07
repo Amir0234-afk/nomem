@@ -91,7 +91,7 @@ class PurgeResult:
 > place for `importance` / `access_count` / `last_accessed_at`. So `as_of=T` correctly
 > answers *which records were active and known at T* and follows supersession chains, but
 > it returns each record's *current* score fields, not their values as of T. Full
-> per-field version history is tracked in [ROADMAP.md](ROADMAP.md) as open question Q1.
+> per-field version history is tracked in [roadmap.md](roadmap.md) as open question Q1.
 
 ## Records are insertable verbatim
 

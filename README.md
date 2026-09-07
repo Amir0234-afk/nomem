@@ -122,8 +122,8 @@ counts as public API.
 
 [docs/](https://github.com/Amir0234-afk/nomem/tree/master/docs) covers the [architecture](https://github.com/Amir0234-afk/nomem/blob/master/docs/architecture.md),
 [schema](https://github.com/Amir0234-afk/nomem/blob/master/docs/schema.md), [adapters and plugins](https://github.com/Amir0234-afk/nomem/blob/master/docs/adapters.md),
-[stability guarantees](https://github.com/Amir0234-afk/nomem/blob/master/docs/stability.md), [current status](https://github.com/Amir0234-afk/nomem/blob/master/docs/PROJECT_STATUS.md),
-[roadmap](https://github.com/Amir0234-afk/nomem/blob/master/docs/ROADMAP.md), and the [test suite](https://github.com/Amir0234-afk/nomem/blob/master/docs/TESTING.md).
+[stability guarantees](https://github.com/Amir0234-afk/nomem/blob/master/docs/stability.md), and the
+[roadmap](https://github.com/Amir0234-afk/nomem/blob/master/docs/roadmap.md).
 
 ## Licence and paid tier
 

@@ -1,30 +1,32 @@
 # nomem — Roadmap & Open Questions
 
-*Phases 0–3 and Phase 4 Parts A + B are done ([PROJECT_STATUS.md](PROJECT_STATUS.md)).
-This is what's left and what still needs deciding.*
+*What is left, and what still needs deciding. For what exists today, read the
+[CHANGELOG](../CHANGELOG.md); for what is guaranteed not to move, read
+[stability.md](stability.md).*
 
 ---
 
-## Phase 4 — Release (MIT tier)
+## Release
 
-**Goal:** anyone can `pip install nomem` and run the quickstart, and the public
-extension surface is frozen well enough that the paid plugin never has to fork.
+Everything needed for `0.1.0` is built: the extension surface is frozen at its final
+shape, no config field is inert, and the package builds, passes `twine check`, installs
+into a clean venv from a wheel, and runs its quickstart with no extras. CI covers
+3.11–3.13, real pgvector and Neo4j, and that wheel-install smoke test.
 
-The full task list is [`../phases/PHASE_4.md`](../phases/PHASE_4.md). Summary:
+**What remains is the upload itself.** In order:
 
-| Part | Work | Reversible? | State |
-|---|---|---|---|
-| **A — Freeze the surface** | `list_edges` + `get_edge` + `purge_user` on `BaseBackend`; `nomem/plugins.py` entry-point hook; `docs/stability.md`; import-path contract tests | **No.** Adding an abstract method after release breaks every third-party backend | ✅ **done** |
-| **B — Resolve dangling config** | Wire `edge_types` + `resolution_strategy`; implement `ingest_mode="manual"`; remove `embed_immediately`; implement `OpenAIEmbedder` and drop the `openai` extra; ship `stats()` | Yes | ✅ **done** |
-| **C — Package and publish** | `pyproject.toml` metadata, `0.1.0`, quickstart, `CHANGELOG` / `CONTRIBUTING`, CI, Test PyPI → PyPI | Yes | ⬜ not started |
+- [ ] Reserve `nomem` on PyPI — it was unclaimed as of 2026-09-07. Do this first.
+- [ ] Publish to Test PyPI, install from it into a clean venv, run the quickstart.
+- [ ] Publish `0.1.0` to PyPI.
 
-The irreversible part is built but **not yet published**, so it is still free to change —
-that stops being true at the first upload. `nomem` was unclaimed on PyPI as of
-2026-09-07 — reserve the name before anything else in Part C. `LICENSE` (MIT) is already
-in the repo.
+The extension surface is free to change right up until that upload, and fixed afterwards:
+the proprietary tier is a separate package depending on the published core, so anything it
+needs must be public and stable *first*. Getting it wrong means either a fork — the failure
+mode the whole design exists to prevent — or a `0.2.0` that breaks every third-party
+backend. **The last cheap moment to review it is before the first upload.**
 
-The docs site (MkDocs + mkdocstrings) is **not** a release blocker. `README.md` plus the
-`docs/` tree on GitHub is enough for `0.1.0`.
+A docs site (MkDocs + mkdocstrings) is **not** a release blocker; `README.md` plus this
+`docs/` tree is enough for `0.1.0`.
 
 ---
 
@@ -93,10 +95,17 @@ and a set-based `SET n.importance = ...` would scale better. **Still open — Q2
 
 `llama3.1:8b` is the default extraction model. Small models miss entities, duplicate
 them, and invent relations. The resolution ambiguity band catches merges, but recall is
-model-bound. Options: ship a better default prompt, support few-shot examples in
-`IngestConfig`, document a recommended model per size class, or make a hosted extraction
-option part of the paid tier. **Still open — Q3.** All four are additive, so none of
-them blocks `0.1.0`.
+model-bound. Options: support few-shot examples in `IngestConfig`, document a recommended
+model per size class, or make a hosted extraction option part of the paid tier.
+**Still open — Q3.** All are additive, so none blocks `0.1.0`.
+
+This is not hypothetical. `llama3.1:8b` originally returned `negated=false` for *every*
+phrasing tried — "has left", "no longer lives in", "moved out of", "ended" — which
+silently disabled retirement, the feature the whole graph model exists for. An emphatic
+rewrite of the `negated` instruction in `_SYSTEM_PROMPT` fixed it; making `negated` a
+required schema field did not. The lesson generalizes: **prompt wording is load-bearing on
+small models, and a scripted `FakeLLM` will never reveal it.** Behavior that depends on
+the model needs a `live` test.
 
 ### 5. `vector(N)` fixed per database
 
@@ -110,6 +119,31 @@ matter of when, not if.
 Each `ingest` is one LLM call + one embed batch. A high-throughput ingester would want
 connection pooling, retries with backoff, and concurrency limits on the adapter side.
 Adapter-local, additive, non-breaking.
+
+### 7. Hierarchical sub-indexes are tag-filtered views
+
+`Retriever._route_sub_index` works as documented — deterministic, semantic, or hybrid
+routing over `metadata["context"]` — but a "sub-index" is a filtered view computed per
+query, not a persisted or learned structure. Whether the vision needs more than that is
+**Q10**.
+
+### 8. Driver exceptions escape the `NomemError` hierarchy
+
+`nomem/exceptions.py` promises that everything nomem raises derives from `NomemError`, so
+one `except` covers the surface. That is false for the most common real failure: a
+database that is down or rejects credentials surfaces `asyncpg.InvalidPasswordError`,
+`neo4j.AuthError`, or a bare `ConnectionRefusedError`. An application following the
+documented advice will crash on an outage, and backend-agnostic error handling is not
+currently possible. The fix — wrapping connection failures in `BackendError` in
+`_build_pool` / `_build_driver` — is purely additive.
+
+### 9. `_http.py` has no total deadline or response cap
+
+`urlopen(timeout=...)` bounds each socket operation, not the request, so a server that
+trickles bytes holds a worker thread indefinitely; `resp.read()` is unbounded, so a very
+large response is buffered whole. Both are bounded in practice by the endpoints being a
+local Ollama and the OpenAI API, which are developer-configured — but `host` / `base_url`
+must never be attacker-controlled, and that should be stated in the adapter docs.
 
 ---
 

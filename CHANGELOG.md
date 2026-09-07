@@ -57,12 +57,16 @@ will change, before `0.2.0`.
 
 ### Notes
 
+- `repr(MemoryGraphConfig)` and `repr(OpenAIEmbedder)` **redact secrets**. Adapter option
+  values — a Postgres DSN, a Neo4j auth tuple, an API key — print as `'***'`, while field
+  names and option keys stay visible. `graph.config` is public API and therefore reaches
+  logs, error reporters, and tracebacks; it must not carry a password there.
 - The core has **no mandatory runtime dependencies**. `postgres` and `neo4j` are extras.
 - There is no telemetry, no phone-home, and no usage tracking.
 - SQLite's vector search is a Python-side linear scan — correct at any size, but intended
   for development and small single-user graphs. Use Postgres or Neo4j at scale.
 - `as_of=` answers *which records were active and known at T*; per-field score history is
-  not retained (see [`docs/ROADMAP.md`](docs/ROADMAP.md) Q1).
+  not retained (see [`docs/roadmap.md`](docs/roadmap.md) Q1).
 
 [Unreleased]: https://github.com/Amir0234-afk/nomem/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/Amir0234-afk/nomem/releases/tag/v0.1.0

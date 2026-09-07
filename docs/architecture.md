@@ -1,5 +1,15 @@
 # nomem architecture
 
+## Repository layout
+
+```
+nomem/              the package (mapped in detail below)
+tests/              one hermetic suite + a shared backend contract suite
+examples/           quickstart.py (no services) and quickstart_ollama.py (the real thing)
+docs/               architecture, schema, adapters, stability, roadmap
+docker-compose.yml  dedicated nomem-postgres (:5433) + nomem-neo4j (:7688)
+```
+
 ## Module map
 
 ```
@@ -33,7 +43,7 @@ nomem/
 │   └── __init__.py    # EMBEDDER_REGISTRY + resolve_embedder()
 └── llms/
     ├── base.py        # BaseLLM ABC — generate_json() for extraction
-    ├── ollama.py      # Phase 1 default · Ollama /api/chat with JSON mode
+    ├── ollama.py      # default · Ollama /api/chat with JSON mode
     ├── custom.py      # CallableLLM — wrap any prompt -> json callable (implemented)
     └── __init__.py    # LLM_REGISTRY + resolve_llm()
 ```
