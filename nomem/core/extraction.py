@@ -33,8 +33,14 @@ _SYSTEM_PROMPT = (
     '{"entities": [{"label": str, "type": "entity"|"event"|"emotion"|"fact", '
     '"negated": bool}], '
     '"relations": [{"source": str, "target": str, "relation": str, "weight": number}]}\n'
-    "\"negated\" is true when the turn says the entity/relationship no longer holds "
-    "(left, died, ended, cancelled, broke up). "
+    # Small models reliably ignore a passing mention of `negated` and return false for
+    # everything, which silently disables retirement — the whole point of the graph.
+    # Being this emphatic is what makes llama3.1:8b actually set it.
+    "CRITICAL — the \"negated\" field: set negated=true for any entity the turn says is "
+    "OVER, ENDED, or NO LONGER TRUE for this person. If someone left a place, that place "
+    "is negated=true. If a project ended, it is negated=true. The NEW place or state they "
+    "moved to is negated=false. You MUST set negated=true on at least one entity whenever "
+    "the turn describes a change, departure, ending, or cancellation. "
     "Every relation's source and target MUST match an entity label exactly. "
     "Use lowercase snake_case relation verbs (e.g. lives_in, caused_by, involves, follows). "
     "Return empty lists if nothing is worth storing."

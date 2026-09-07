@@ -28,7 +28,6 @@ from importlib.metadata import version as _pkg_version
 
 from .config import DecayConfig, IngestConfig, MemoryGraphConfig, RetrievalConfig
 from .exceptions import (
-    AmbiguousResolutionError,
     BackendError,
     ConfigError,
     EdgeNotFoundError,
@@ -37,7 +36,6 @@ from .exceptions import (
     NodeNotFoundError,
     NomemError,
     NotSupportedError,
-    ResolutionError,
     RetrievalBudgetExceededError,
 )
 from .graph import MemoryGraph
@@ -60,7 +58,6 @@ except PackageNotFoundError:  # running from a source tree that was never instal
     __version__ = "0.0.0+unknown"
 
 __all__ = [
-    "AmbiguousResolutionError",
     "BackendError",
     "ConfigError",
     "DecayConfig",
@@ -81,7 +78,6 @@ __all__ = [
     "NotSupportedError",
     "Plugin",
     "PurgeResult",
-    "ResolutionError",
     "ResolutionOutcome",
     "RetrievalBudgetExceededError",
     "RetrievalConfig",

@@ -45,18 +45,5 @@ class ExtractionError(NomemError):
     """The entity/relation extraction step failed."""
 
 
-class ResolutionError(NomemError):
-    """Entity resolution could not complete."""
-
-
-class AmbiguousResolutionError(ResolutionError):
-    """A low-confidence match was forced to resolve.
-
-    nomem never silently merges entities on a low-confidence match. When the
-    configured strategy has no safe fallback, this is raised instead; the
-    ambiguous candidates are also reported in the ingest receipt.
-    """
-
-
 class RetrievalBudgetExceededError(NomemError):
     """A retrieval would exceed the configured token budget without an override."""

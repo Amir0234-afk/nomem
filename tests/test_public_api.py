@@ -31,6 +31,31 @@ def test_all_is_sorted_and_importable() -> None:
         assert hasattr(nomem, name), f"{name} is in __all__ but not importable"
 
 
+def test_every_exported_exception_is_actually_raised() -> None:
+    """No exported exception may be decoration.
+
+    `HardDeleteNotSupportedError` and `AmbiguousResolutionError` were both
+    exported, documented, and never raised — the second still carried a
+    docstring describing behavior that did not exist. Publishing freezes
+    `__all__`, so a dead exception is a promise that cannot be withdrawn until
+    the next minor. A class is legitimate if it is raised, or if it is a base
+    that something else subclasses.
+    """
+    source = "\n".join(
+        p.read_text(encoding="utf-8") for p in (Path(nomem.__file__).parent).rglob("*.py")
+    )
+    dead = []
+    for name in (n for n in nomem.__all__ if n.endswith("Error")):
+        raised = re.search(rf"raise\s+{name}\b", source)
+        subclassed = re.search(rf"class\s+\w+\({name}\)", source)
+        if not raised and not subclassed:
+            dead.append(name)
+    assert not dead, (
+        f"exported but never raised or subclassed: {dead}. "
+        "Raise it, give it a subclass, or remove it from __all__ before release."
+    )
+
+
 def test_all_matches_stability_doc() -> None:
     """`__all__` and docs/stability.md's Public table must not drift apart.
 

@@ -1,162 +1,139 @@
 # nomem
 
-> **No One's Memory Management** — persistent, self-updating memory for LLM apps.
-> Maintainer: No One's Studio · License: MIT (core) / Proprietary (advanced features)
+Persistent, per-user memory for LLM applications, stored as a knowledge graph that
+updates itself.
 
-`nomem` gives LLM-powered applications persistent, per-user memory structured as a
-**bi-temporal knowledge graph** with an explicit, LLM-powered CRUD interface.
-
-You feed it conversation turns. nomem extracts entities and relationships, writes them
-into a graph using real CREATE / UPDATE / RETIRE operations, and retrieves a
-bounded, relevant subgraph at query time. The graph reflects the *evolving state* of a
-conversation — not an append-only log.
-
-nomem is **not** a vector database, an LLM wrapper, or a chat-history store. It is a graph
-database with an LLM-powered CRUD interface. The developer controls the rules.
-
-## Status: extension surface frozen, release pending
-
-Working end-to-end: Ollama-based extraction, entity resolution (embedding + near-exact
-string match, strategy-selectable), the bi-temporal node/edge schema, `as_of` historical
-retrieval, the opt-in cross-reference pass, `ingest_mode="manual"` dry runs, the **decay
-pass** (`run_decay()` — scoring + optional pruning), and **hierarchical retrieval** (core
-index + context-tag-routed situation sub-indexes) — on **all three backends** (SQLite,
-PostgreSQL/pgvector, Neo4j), which pass one identical behavioral contract suite. The
-**sync API** is a thin wrapper over the async core and stays valid across calls with
-networked backends.
-
-Phase 4 is complete: `BaseBackend` has its final **14-method** shape, graph dumps
-round-trip (retired records included), `nomem.plugins` mounts third-party capability at
-`graph.<namespace>`, no config field is inert, and the package builds as `0.1.0` with CI
-covering 3.11–3.13, real pgvector and Neo4j, and a wheel-install smoke test
-([`phases/PHASE_4.md`](phases/PHASE_4.md)). **The one step left is the upload** — until
-then, install from source rather than PyPI.
-
-### Backends other than SQLite
+Feed it conversation turns. It pulls out entities and relationships, matches them against
+what it already knows, and applies real CREATE, UPDATE, and RETIRE operations. Ask it a
+question later and you get back a small, relevant subgraph instead of a growing pile of
+chat history.
 
 ```bash
-docker compose up -d   # pgvector on :5433, Neo4j on :7688 (see docker-compose.yml)
+pip install nomem
 ```
-```python
-MemoryGraph(
-    user_id="u1", embedder="nomic",
-    backend="postgres",
-    backend_options={"dsn": "postgresql://nomem:nomem@localhost:5433/nomem"},
-)
-MemoryGraph(
-    user_id="u1", embedder="nomic",
-    backend="neo4j",
-    backend_options={"uri": "bolt://localhost:7688", "auth": ("neo4j", "nomemtest123")},
-)
-```
-Each keeps its vector store at one fixed dimension — use a dedicated database per
-embedding model. Close networked backends with `graph.close()` / `await graph.aclose()`,
-or use `with` / `async with`.
 
-**SQLite is the dev backend.** Its vector search loads every active node and computes
-cosine in Python — fine for local work and small single-user graphs, degrading past
-~10⁴ nodes. Point production at Postgres or Neo4j, which use native vector indexes.
+The core has no required dependencies. SQLite comes with Python, and the default embedder
+talks to a local [Ollama](https://ollama.com) over plain HTTP.
 
-## Install
+## Quick start
 
 ```bash
-uv add nomem             # core: zero mandatory dependencies
-uv add "nomem[postgres]" # + asyncpg / pgvector
-uv add "nomem[neo4j]"    # + neo4j driver
+ollama pull nomic-embed-text   # embeddings, 768-dim
+ollama pull llama3.1:8b        # extraction
 ```
-
-The nomic and OpenAI embedders both work with no extra — they talk plain HTTP over the
-stdlib.
-
-Local dev needs nothing beyond Python 3.11+ and a running
-[Ollama](https://ollama.com):
-
-```bash
-ollama pull nomic-embed-text   # default embedder (768-dim)
-ollama pull llama3.1:8b        # default extraction model
-```
-
-Any piece is swappable — pass a `BaseBackend` / `BaseEmbedder` / `BaseLLM` instance or a
-bare callable instead of the adapter name.
-
-## Usage
 
 ```python
+from datetime import UTC, datetime
 from nomem import MemoryGraph
 
-graph = MemoryGraph(
-    user_id="u123",
-    backend="sqlite",      # sqlite | postgres | neo4j | your BaseBackend
-    backend_options={"path": "memory.sqlite"},
-    embedder="nomic",      # nomic | openai | any BaseEmbedder / callable
-    llm="ollama",          # ollama | any BaseLLM / callable (extraction)
-    decay="combined",      # "time" | "access" | "combined" | None
-    ingest_mode="auto",    # "manual" = dry run: resolve, write nothing
-)
+with MemoryGraph(user_id="u123", backend_options={"path": "memory.sqlite"}) as graph:
+    graph.ingest(
+        user="Where's Kira living now?",
+        assistant="Kira lives in Berlin.",
+    )
 
-graph.ingest(
-    user="What happened with Kira?",
-    assistant="Kira left the room after the argument.",
-    context=["household"],           # optional tags for hierarchical routing
-)
+    checkpoint = datetime.now(UTC)
 
-result = graph.retrieve("Kira")
-# -> SubGraph(nodes=[...], edges=[...], metadata={...})
+    # A later turn that contradicts the first. nomem retires what no longer holds.
+    receipt = graph.ingest(
+        user="Any news about Kira?",
+        assistant="Kira has left Berlin. She lives in Lisbon now.",
+    )
+    print("retired:", receipt.nodes_retired)
 
-result = graph.retrieve("Kira", as_of=some_datetime)   # historical state
-result = graph.retrieve(                                # hierarchical
-    "Kira", config={"mode": "hierarchical"}, context=["household"],
-)
-
-graph.run_decay()   # rescore importance; prune if decay_config.pruning is on
-graph.stats()       # {"nodes_active": 12, "nodes_retired": 3, "nodes_by_type": {...}, ...}
-
-# async variants — identical signatures
-await graph.aingest(...)
-await graph.aretrieve(...)
-await graph.arun_decay()
+    for node in graph.retrieve("Where does Kira live?").nodes:
+        print(node.type, node.label)
 ```
 
-The sync API is a thin wrapper over the async core.
+Nothing was deleted. The superseded facts were retired, so you can ask what the graph
+believed before that second turn by passing the checkpoint you captured:
+
+```python
+for node in graph.retrieve("Where does Kira live?", as_of=checkpoint).nodes:
+    print(node.type, node.label)
+```
+
+What comes back depends on your extraction model — these snippets print whatever it
+found rather than promising exact labels. For a version that is fully deterministic and
+needs no Ollama at all, see
+[examples/quickstart.py](https://github.com/Amir0234-afk/nomem/blob/master/examples/quickstart.py).
+
+Every method has an async twin (`aingest`, `aretrieve`, `arun_decay`). The synchronous API
+is a thin wrapper, not a second implementation.
+
+## Why it works this way
+
+**Conversations change facts, so the graph changes with them.** When someone moves house,
+the old fact is retired and superseded rather than left to contradict the new one. Nothing
+is ever hard-deleted, and both timelines are tracked: when a fact was true in the world,
+and when nomem learned it.
+
+**Retrieval stays bounded.** A user with three years of history gets the same token budget
+as one with three days. You configure the budget; nomem drops the least important nodes to
+stay inside it.
+
+**Uncertainty is reported, not resolved silently.** When a name is a near-match for an
+existing entity, nomem will not quietly merge them. The ambiguity comes back in the ingest
+receipt and you decide what happens.
+
+**You own the settings.** Extraction model, traversal depth, decay rates, pruning, edge
+vocabulary, resolution thresholds: all configurable, with defaults that are documented
+rather than hidden.
+
+## Backends
+
+| Backend | Setup | Vector search |
+|---|---|---|
+| `sqlite` | none, the default | linear scan in Python |
+| `postgres` | `pip install "nomem[postgres]"` | pgvector index |
+| `neo4j` | `pip install "nomem[neo4j]"` | native vector index |
+
+```python
+MemoryGraph(
+    user_id="u1",
+    backend="postgres",
+    backend_options={"dsn": "postgresql://user:pass@localhost:5432/nomem"},
+)
+```
+
+All three pass one shared behavioral test suite, so switching backends does not change
+results. SQLite is for development and small graphs; its vector search is a linear scan
+that degrades past roughly ten thousand nodes. Use Postgres or Neo4j in production, and
+give each embedding model its own database, since the vector width is fixed when the
+schema is created.
 
 ## Extending it
 
-Three sanctioned boundaries, all public and all documented in
-[docs/stability.md](docs/stability.md):
+Storage, embedding, and extraction are all interfaces. Implement `BaseBackend`,
+`BaseEmbedder`, or `BaseLLM` and pass an instance, or wrap a plain function:
 
-- **Adapters** — implement `BaseBackend`, `BaseEmbedder`, or `BaseLLM` and register a
-  name (or pass an instance). Swaps a component.
-- **Plugins** — advertise a `nomem.plugins` entry point; `MemoryGraph` mounts what your
-  `attach(graph)` returns at `graph.<namespace>`. Adds capability.
-- **Config** — every threshold, mode, and model name is a dataclass field, overridable
-  per call.
+```python
+from nomem.embedders import CallableEmbedder
 
-If something can't be built through those three, that's a gap in the surface, and the fix
-belongs here in the open core.
+MemoryGraph(user_id="u1", embedder=CallableEmbedder(my_embed_fn, dimensions=768))
+```
 
-## Docs
+For capability rather than substitution, publish a `nomem.plugins` entry point and
+`MemoryGraph` will mount it at `graph.<yourname>`. See
+[docs/adapters.md](https://github.com/Amir0234-afk/nomem/blob/master/docs/adapters.md), and [docs/stability.md](https://github.com/Amir0234-afk/nomem/blob/master/docs/stability.md) for what
+counts as public API.
 
-Start at [docs/README.md](docs/README.md) for the index.
+## Documentation
 
-| Doc | What |
-|---|---|
-| [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) | Where the project stands — phases, what works, what's stubbed, gaps against AGENT.md |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | Phase 4 / 5 plan, known limitations, which design questions are decided and which are open |
-| [docs/stability.md](docs/stability.md) | The public API and what `nomem>=0.1,<0.2` guarantees |
-| [docs/TESTING.md](docs/TESTING.md) | The 178-test suite, file by file, plus what 0.1.0 still needs |
-| [docs/architecture.md](docs/architecture.md) | Module map + ingest / retrieval / decay pipelines + the sync and plugin models |
-| [docs/schema.md](docs/schema.md) | Canonical `Node` / `Edge` / `SubGraph` schema + bi-temporal semantics |
-| [docs/adapters.md](docs/adapters.md) | Writing your own backend, embedder, LLM, or plugin |
-| [phases/PHASE_4.md](phases/PHASE_4.md) | The release spec |
+[docs/](https://github.com/Amir0234-afk/nomem/tree/master/docs) covers the [architecture](https://github.com/Amir0234-afk/nomem/blob/master/docs/architecture.md),
+[schema](https://github.com/Amir0234-afk/nomem/blob/master/docs/schema.md), [adapters and plugins](https://github.com/Amir0234-afk/nomem/blob/master/docs/adapters.md),
+[stability guarantees](https://github.com/Amir0234-afk/nomem/blob/master/docs/stability.md), [current status](https://github.com/Amir0234-afk/nomem/blob/master/docs/PROJECT_STATUS.md),
+[roadmap](https://github.com/Amir0234-afk/nomem/blob/master/docs/ROADMAP.md), and the [test suite](https://github.com/Amir0234-afk/nomem/blob/master/docs/TESTING.md).
 
-## Open-core split
+## Licence and paid tier
 
-The MIT core covers graph CRUD, the SQLite / PostgreSQL / Neo4j backends, the default
-embedder, decay + pruning, and `ingest()` / `retrieve()`. Graph export/import, cross-user
-queries, retrieval analytics, GDPR tooling, the hosted backend, and team namespacing are
-proprietary.
+The core is MIT and covers everything above: graph CRUD, all three backends, the default
+embedder, decay, and ingest/retrieve.
 
-The paid tier is a **separate package** that depends on this one from PyPI and extends it
-through the public registries and the `nomem.plugins` entry point. It is not a fork and
-contains no copy of this source, so core updates reach it as an ordinary dependency bump.
-Everything it needs is public here. See [AGENT.md](AGENT.md).
+Graph export and import, cross-user queries, retrieval analytics, GDPR tooling, team
+namespacing, and a hosted backend are **planned** as a separate commercial package. None of
+them is built or available yet, and nothing in this repository depends on them.
+
+That package, if and when it ships, will depend on this one and extend it through the same
+public interfaces documented above — the plugin entry point and the adapter registries. It
+will not be a fork, and none of it will be required to use nomem.

@@ -79,3 +79,35 @@ def test_merge_rejects_unknown_keys() -> None:
 def test_merge_none_is_noop() -> None:
     base = DecayConfig()
     assert merge(base, None) is base
+
+
+def test_repr_redacts_adapter_option_values() -> None:
+    """Secrets must never reach a log or traceback through `graph.config`.
+
+    `.config` is public API, so it lands in `logging`, error reporters, and
+    unhandled tracebacks. The generated dataclass repr printed the Postgres DSN
+    — password and all.
+    """
+    cfg = MemoryGraphConfig(
+        user_id="u1",
+        backend="postgres",
+        backend_options={"dsn": "postgresql://nomem:SUPERSECRET@localhost:5433/nomem"},
+        embedder_options={"api_key": "sk-TOPSECRET"},
+        llm_options={"token": "HUNTER2"},
+    )
+    text = repr(cfg)
+    for secret in ("SUPERSECRET", "sk-TOPSECRET", "HUNTER2"):
+        assert secret not in text, f"{secret} leaked into repr(MemoryGraphConfig)"
+
+    # Keys and field names stay visible — the repr must still be useful.
+    assert "backend_options=" in text
+    assert "'dsn'" in text
+    assert "'api_key'" in text
+    assert "user_id='u1'" in text
+    assert "***" in text
+
+
+def test_repr_of_openai_embedder_hides_the_key() -> None:
+    from nomem.embedders.openai import OpenAIEmbedder
+
+    assert "sk-TOPSECRET" not in repr(OpenAIEmbedder(api_key="sk-TOPSECRET"))

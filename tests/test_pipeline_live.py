@@ -88,3 +88,27 @@ async def test_real_decay_and_hierarchical(graph: MemoryGraph) -> None:
     result = await graph.arun_decay()
     assert result.nodes_scored >= 3
     assert all(s >= 0.0 for s in result.scores.values())
+
+
+async def test_real_model_actually_negates(graph: MemoryGraph) -> None:
+    """A real extraction model must set `negated`, not just the scripted fake.
+
+    Every other negation test hands the pipeline `negated: True` directly via
+    `FakeLLM`, so they prove the CRUD layer retires correctly but say nothing
+    about whether extraction ever *asks* for a retirement. It did not:
+    `llama3.1:8b` returned `negated=false` for every phrasing until the system
+    prompt was made emphatic about it, silently disabling supersession — the
+    library's headline feature — for anyone on the default model.
+    """
+    await graph.aingest("Where is Kira?", "Kira lives in Berlin.")
+    receipt = await graph.aingest(
+        "Any news about Kira?", "Kira has left Berlin. She lives in Lisbon now."
+    )
+    assert receipt.nodes_retired, (
+        "the extraction model produced no negation, so nothing was retired — "
+        "check the `negated` guidance in core/extraction.py::_SYSTEM_PROMPT"
+    )
+
+    retired_id = receipt.nodes_retired[0]
+    node = await graph.backend.get_node(retired_id)
+    assert node is not None and node.valid_to is not None  # retired, never deleted

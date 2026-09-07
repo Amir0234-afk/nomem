@@ -61,6 +61,15 @@ class OpenAIEmbedder(BaseEmbedder):
         self.timeout = timeout
         self.options = options
 
+    def __repr__(self) -> str:
+        """Never print the API key — this object can reach logs and tracebacks."""
+        key = "***" if (self.api_key or os.environ.get("OPENAI_API_KEY")) else None
+        return (
+            f"{type(self).__name__}(model={self.model!r}, "
+            f"dimensions={self._dimensions!r}, base_url={self.base_url!r}, "
+            f"api_key={key!r})"
+        )
+
     async def embed(self, text: str) -> Vector:
         return (await self.embed_batch([text]))[0]
 

@@ -20,6 +20,7 @@ nomem returns the structured object — it never serializes to a prompt string.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 
 from .._vector import cosine, mean
@@ -222,12 +223,25 @@ class Retriever:
         return subgraph
 
     async def _bump_access(self, nodes: list[Node]) -> None:
+        """Record that these nodes were returned.
+
+        Issued concurrently: this is one write per returned node on the hot read
+        path, and serially that is `top_k`-plus round trips against a networked
+        backend. The bundled backends serialize internally where they must.
+        """
+        if not nodes:
+            return
         now = datetime.now(tz=UTC)
-        for node in nodes:
-            await self.backend.update_node(
-                node.id,
-                {"access_count": node.access_count + 1, "last_accessed_at": now},
+        await asyncio.gather(
+            *(
+                self.backend.update_node(
+                    node.id,
+                    {"access_count": node.access_count + 1, "last_accessed_at": now},
+                )
+                for node in nodes
             )
+        )
+        for node in nodes:
             node.access_count += 1
             node.last_accessed_at = now
 

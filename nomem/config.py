@@ -17,6 +17,17 @@ from typing import Any
 from .exceptions import ConfigError
 from .models import DecayMode, IngestMode, RetrievalMode, SubIndexStrategy
 
+#: Stand-in printed instead of an adapter option value. See
+#: :meth:`MemoryGraphConfig.__repr__`.
+REDACTED = "***"
+
+
+def _redact(options: dict[str, Any]) -> str:
+    """Render an options dict with its keys intact and every value redacted."""
+    if not options:
+        return "{}"
+    return "{" + ", ".join(f"{k!r}: {REDACTED!r}" for k in options) + "}"
+
 
 @dataclass
 class DecayConfig:
@@ -118,6 +129,30 @@ class MemoryGraphConfig:
     def __post_init__(self) -> None:
         if not self.user_id:
             raise ConfigError("MemoryGraphConfig.user_id is required")
+
+    def __repr__(self) -> str:
+        """Redact adapter option **values**; keep every field and key visible.
+
+        The ``*_options`` dicts carry connection secrets — a Postgres DSN with a
+        password, a Neo4j auth tuple, an API key. This object is public API, so
+        it lands in logs, error reporters, and tracebacks; the generated
+        dataclass repr would put those secrets in all three. Keys stay visible
+        so the repr is still useful for debugging *which* options were set.
+        """
+        parts = [
+            f"user_id={self.user_id!r}",
+            f"backend={self.backend!r}",
+            f"embedder={self.embedder!r}",
+            f"llm={self.llm!r}",
+            f"decay={self.decay!r}",
+            f"ingest_mode={self.ingest_mode!r}",
+            f"decay_config={self.decay_config!r}",
+            f"ingest_config={self.ingest_config!r}",
+            f"retrieval_config={self.retrieval_config!r}",
+        ]
+        for name in ("backend_options", "embedder_options", "llm_options"):
+            parts.append(f"{name}={_redact(getattr(self, name))}")
+        return f"{type(self).__name__}({', '.join(parts)})"
 
 
 def merge(base: Any, overrides: dict[str, Any] | None) -> Any:
