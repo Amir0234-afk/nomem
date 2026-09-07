@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nomem"
-version = "0.1.0.post1"
+version = "0.1.0"
 description = "No One's Memory Management — persistent, self-updating knowledge-graph memory for LLM apps"
 readme = "README.md"
 requires-python = ">=3.11"

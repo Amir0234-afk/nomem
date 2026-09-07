@@ -40,6 +40,8 @@ with MemoryGraph(user_id="u123", backend_options={"path": "memory.sqlite"}) as g
         assistant="Kira has left Berlin. She lives in Lisbon now.",
     )
     print("retired:", receipt.nodes_retired)
+    print("held for review:", [(o.extracted.label, round(o.confidence, 2))
+                                for o in receipt.ambiguous_resolutions])
 
     for node in graph.retrieve("Where does Kira live?").nodes:
         print(node.type, node.label)
@@ -54,8 +56,12 @@ for node in graph.retrieve("Where does Kira live?", as_of=checkpoint).nodes:
 ```
 
 What comes back depends on your extraction model — these snippets print whatever it
-found rather than promising exact labels. For a version that is fully deterministic and
-needs no Ollama at all, see
+found rather than promising exact labels. You may also see "Lisbon" land in
+`ambiguous_resolutions` instead of becoming a node: nomem never silently merges an
+entity on a low-confidence match, and a real embedding model can score two cities
+close enough to each other to fall into that band. That is the ambiguity-reporting
+behavior described below working as intended, not a bug in the example. For a version
+that is fully deterministic and needs no Ollama at all, see
 [examples/quickstart.py](https://github.com/Amir0234-afk/nomem/blob/master/examples/quickstart.py).
 
 Every method has an async twin (`aingest`, `aretrieve`, `arun_decay`). The synchronous API
