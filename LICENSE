@@ -19,9 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-
-This MIT license covers the nomem open-core library. Advanced features listed
-in AGENT.md ("Open Core Split") — graph export/import, cross-user queries,
-retrieval analytics, GDPR tooling, the hosted managed backend, and team
-namespacing — are proprietary and are not distributed under these terms.
