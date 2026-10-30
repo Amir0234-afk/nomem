@@ -131,15 +131,14 @@ counts as public API.
 [stability guarantees](https://github.com/Amir0234-afk/nomem/blob/master/docs/stability.md), and the
 [roadmap](https://github.com/Amir0234-afk/nomem/blob/master/docs/roadmap.md).
 
-## Licence and paid tier
+## License and paid tier
 
-The core is MIT and covers everything above: graph CRUD, all three backends, the default
-embedder, decay, and ingest/retrieve.
+The core is MIT-licensed (see [LICENSE](LICENSE)) and covers everything above:
+graph CRUD, all three backends, the default embedder, decay, and ingest/retrieve.
 
-Graph export and import, cross-user queries, retrieval analytics, GDPR tooling, team
-namespacing, and a hosted backend are **planned** as a separate commercial package. None of
-them is built or available yet, and nothing in this repository depends on them.
-
-That package, if and when it ships, will depend on this one and extend it through the same
-public interfaces documented above — the plugin entry point and the adapter registries. It
-will not be a fork, and none of it will be required to use nomem.
+nomem-pro is a separate, proprietary package from No One's Studio, available at
+[no0nestudio.com](https://no0nestudio.com). It is not part of this repository
+and is not covered by the MIT license. It adds graph export/import, cross-user
+queries, retrieval analytics, GDPR tooling, and team namespacing, and extends
+nomem through the `nomem.plugins` entry point and the adapter registries
+documented above. It is not a fork, and nothing in the core requires it.
